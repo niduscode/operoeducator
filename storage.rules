@@ -1,0 +1,71 @@
+rules_version = '2';
+
+// =============================================================
+// OperoEducator — Academia Hernández
+// Reglas Firebase Storage. Mismas listas de director/admin que
+// firestore.rules; mantener en sincronía con lib/types.ts.
+// =============================================================
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ---------- Helpers ----------
+
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function username() {
+      return request.auth.token.email.split('@')[0].lower();
+    }
+
+    function isDirector() {
+      return isAuthed() && username() in ['director.christan', 'director.maria'];
+    }
+
+    function isAdmin() {
+      return isAuthed() && username() in ['admin.finanzas'];
+    }
+
+    function isStaff() {
+      return isDirector() || isAdmin();
+    }
+
+    // Tamaño máximo y tipos permitidos.
+    function maxBytes() { return 5 * 1024 * 1024; }
+    function isPdf() {
+      return request.resource.contentType == 'application/pdf';
+    }
+    function isImageOrPdf() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp)')
+        || request.resource.contentType == 'application/pdf';
+    }
+
+    // ---------- Comprobantes de pago de alumnos ----------
+    // Path: comprobantes/{alumnoId}/{año-mes-timestamp}.{ext}
+    // Sólo staff sube/lee. Tope 5 MB. JPG/PNG/WEBP/PDF.
+    match /comprobantes/{alumnoId}/{file=**} {
+      allow read: if isStaff();
+      allow write: if isStaff()
+        && request.resource.size < maxBytes()
+        && isImageOrPdf();
+      allow delete: if isStaff();
+    }
+
+    // ---------- PDFs de temario ----------
+    // Path: temario/{curso}/{semana}-{dia}-{timestamp}.pdf
+    // Solo director escribe; lectura pública para autenticados (los
+    // instructores muestran el material en el aula virtual).
+    match /temario/{curso}/{file=**} {
+      allow read: if isAuthed();
+      allow write: if isDirector()
+        && request.resource.size < maxBytes()
+        && isPdf();
+      allow delete: if isDirector();
+    }
+
+    // ---------- Cierre defensivo ----------
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

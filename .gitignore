@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase secrets
+.env.local
+.env*.local
+.firebase-service-account.json
+*-firebase-adminsdk-*.json
+
+# Firebase Hosting build cache (artefactos, no fuentes)
+/.firebase/

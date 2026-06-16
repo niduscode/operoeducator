@@ -1,0 +1,42 @@
+services:
+  # Contenedor único: Next.js
+  # (Firebase vive en la nube, no necesita contenedor local)
+  app:
+    build: .
+    container_name: academia_app
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    env_file:
+      - .env.local
+    networks:
+      - academia_network
+
+# --- POSTGRES COMENTADO PARA FUTURO USO ---
+# Si en el futuro quieres migrar de Firebase a Postgres,
+# descomenta este bloque y también la sección "volumes" de abajo.
+#
+#  db:
+#    image: postgres:16-alpine
+#    container_name: academia_db
+#    restart: always
+#    environment:
+#      POSTGRES_USER: academia_user
+#      POSTGRES_PASSWORD: academia_pass
+#      POSTGRES_DB: academia_db
+#    ports:
+#      - "5432:5432"
+#    volumes:
+#      - postgres_data:/var/lib/postgresql/data
+#    networks:
+#      - academia_network
+
+# volumes:
+#   postgres_data:
+
+networks:
+  academia_network:
+    driver: bridge

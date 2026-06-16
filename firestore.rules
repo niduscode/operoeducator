@@ -1,0 +1,178 @@
+rules_version = '2';
+
+// =============================================================
+// OperoEducator — Academia Hernández
+// Reglas Firestore. Roles se derivan del username (parte antes de "@")
+// del email autenticado, contra las listas DIRECTORES/ADMINS de
+// lib/types.ts. Mantener ambos en sincronía.
+// =============================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function username() {
+      // request.auth.token.email es el email del usuario logueado.
+      // Tomamos la parte antes de "@", igual que emailToUsername().
+      return request.auth.token.email.split('@')[0].lower();
+    }
+
+    function isDirector() {
+      // Mantener en sincronía con DIRECTORES en lib/types.ts.
+      return isAuthed() && username() in ['director.christan', 'director.maria'];
+    }
+
+    function isAdmin() {
+      // Mantener en sincronía con ADMINS en lib/types.ts.
+      return isAuthed() && username() in ['admin.finanzas'];
+    }
+
+    function isInstructor() {
+      // Cualquier autenticado que no sea director/admin.
+      return isAuthed() && !isDirector() && !isAdmin();
+    }
+
+    function isStaff() {
+      // Director o admin. Lectura amplia, escritura controlada por colección.
+      return isDirector() || isAdmin();
+    }
+
+    // ---------- Alumnos ----------
+
+    match /alumnos/{alumnoId} {
+      // Lectura: cualquier autenticado (instructores filtran client-side
+      // por su sucursal).
+      allow read: if isAuthed();
+      // Crear y borrar: sólo director (alta/baja del padrón).
+      allow create, delete: if isDirector();
+      // v4: update permitido a staff (director + admin) y a instructores
+      // autenticados. Es necesario para la asignación de profes guías y de
+      // alumnos a sí mismos desde el InstructorDashboard. Firestore rules
+      // no pueden limitar campos específicos en update sin verbosidad
+      // significativa, así que confiamos en validación client-side
+      // (sucursal del alumno = sucursal del instructor logueado).
+      allow update: if isAuthed() && (isStaff() || isInstructor());
+    }
+
+    // ---------- Profes Guías ----------
+
+    match /profesGuias/{profeId} {
+      allow read: if isAuthed();
+      allow create, update, delete: if isDirector();
+    }
+
+    // ---------- Instructores (perfiles operativos) ----------
+
+    match /instructores/{instructorId} {
+      // Cualquier autenticado puede LEER (los instructores leen su propio
+      // perfil para resolver sucursal y su rol; admin/director ven todos).
+      allow read: if isAuthed();
+      // Solo director crea, edita y desactiva perfiles.
+      allow create, update, delete: if isDirector();
+    }
+
+    // ---------- Historial de asignaciones ----------
+
+    match /historialAsignaciones/{historialId} {
+      // Director y admin ven el historial completo.
+      // Los instructores no necesitan leerlo desde la web.
+      allow read: if isStaff();
+      // Solo director escribe (vía reasignarSucursal/createInstructor).
+      allow create, update, delete: if isDirector();
+    }
+
+    // ---------- Asistencias de alumnos ----------
+
+    match /asistenciasAlumnos/{asistenciaId} {
+      // Lectura: autenticados (los hooks filtran por sucursal/fecha).
+      allow read: if isAuthed();
+      // Crear/actualizar:
+      //   - director y admin sin restricciones (corrección retroactiva).
+      //   - instructor: solo si registradaPor coincide con su username.
+      allow create: if isStaff()
+        || (isInstructor() && request.resource.data.registradaPor == username());
+      allow update: if isStaff()
+        || (isInstructor() && resource.data.registradaPor == username());
+      // Borrado: solo director.
+      allow delete: if isDirector();
+    }
+
+    // ---------- Evaluaciones de alumnos ----------
+
+    match /evaluacionesAlumnos/{evaluacionId} {
+      allow read: if isAuthed();
+      allow create: if isStaff()
+        || (isInstructor() && request.resource.data.evaluadoPor == username());
+      allow update: if isStaff()
+        || (isInstructor() && resource.data.evaluadoPor == username());
+      allow delete: if isDirector();
+    }
+
+    // ---------- Asistencias de profes guías ----------
+
+    match /asistenciasProfesGuias/{asistenciaId} {
+      allow read: if isAuthed();
+      allow create: if isStaff()
+        || (isInstructor() && request.resource.data.registradaPor == username());
+      allow update: if isStaff()
+        || (isInstructor() && resource.data.registradaPor == username());
+      allow delete: if isDirector();
+    }
+
+    // ---------- Temarios ----------
+
+    match /temarios/{cursoId} {
+      // Lectura: cualquier autenticado (instructores leen el temario del día).
+      allow read: if isAuthed();
+      // Solo director crea/edita.
+      allow create, update, delete: if isDirector();
+    }
+
+    // ---------- Config de pagos (singleton "default") ----------
+
+    match /configPagos/{docId} {
+      allow read: if isAuthed();
+      allow create, update, delete: if isDirector();
+    }
+
+    // ---------- Precios de alumnos (singleton "default") ----------
+
+    match /preciosAlumnos/{docId} {
+      allow read: if isAuthed();
+      allow create, update, delete: if isDirector();
+    }
+
+    // ---------- Pagos de alumnos ----------
+
+    match /pagosAlumnos/{pagoId} {
+      // Lectura: solo staff (datos financieros sensibles).
+      allow read: if isStaff();
+      // Crear/editar/eliminar: director o admin.
+      allow create, update, delete: if isStaff();
+    }
+
+    // ---------- Pagos realizados a personal ----------
+    // Registro de cuándo se ejecutó el pago a un instructor o profe guía.
+    // El cálculo del monto sigue viviendo on-demand; este doc sólo marca
+    // "ya se le pagó".
+
+    match /pagosRealizados/{pagoId} {
+      // Lectura: solo staff (director o admin) — datos financieros sensibles,
+      // mismo criterio que pagosAlumnos.
+      allow read: if isStaff();
+      // Escritura: sólo director o admin.
+      allow create, update, delete: if isStaff();
+    }
+
+    // ---------- Cierre defensivo ----------
+
+    // Cualquier otra colección queda denegada por defecto.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
