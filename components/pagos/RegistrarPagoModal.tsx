@@ -146,13 +146,16 @@ export default function RegistrarPagoModal({
     let cancelado = false;
     setChequeando(true);
     // Supabase: anio en vez de año (col en snake_case en BD).
-    supabase
-      .from("pagos_alumnos")
-      .select("id, monto, tipo_pago")
-      .eq("alumno_id", alumnoId)
-      .eq("mes", mes)
-      .eq("anio", año)
-      .then(({ data, error }) => {
+    // PostgrestBuilder devuelve un PromiseLike sin .finally — encadenamos
+    // a un Promise nativo con .then(() => res) para poder usar finally.
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("pagos_alumnos")
+          .select("id, monto, tipo_pago")
+          .eq("alumno_id", alumnoId)
+          .eq("mes", mes)
+          .eq("anio", año);
         if (cancelado) return;
         if (error) {
           console.error("chequeo pagos existentes:", error);
@@ -167,10 +170,10 @@ export default function RegistrarPagoModal({
             tipoPago: (d.tipo_pago as string | undefined) ?? "Total",
           }));
         setPagosExistentes(rows);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelado) setChequeando(false);
-      });
+      }
+    })();
     return () => {
       cancelado = true;
     };
@@ -323,9 +326,8 @@ export default function RegistrarPagoModal({
         registradoPor: isEdit
           ? initialPago?.registradoPor || registradoPor || "desconocido"
           : registradoPor || "desconocido",
-        registradoEn: isEdit
-          ? initialPago?.registradoEn || ahora
-          : ahora,
+        // registradoEn NO va en el input: lo setea Postgres vía
+        // registrado_en TIMESTAMPTZ DEFAULT now() en el schema (0004).
       };
 
       await onSubmit(input, initialPago?.id);

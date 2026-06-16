@@ -21,8 +21,8 @@ interface UseTemarioReturn {
   deleteSemana: (semanaNumero: number) => Promise<void>;
   // Compat con la API vieja: save reemplaza atómicamente el temario
   // completo (fechaInicio + lista de semanas) en una sola transacción
-  // lógica. Usado por /temario.
-  save: (data: TemarioCurso) => Promise<void>;
+  // lógica. Usado por /temario. `actualizadoEn` se setea automáticamente.
+  save: (data: Omit<TemarioCurso, "actualizadoEn">) => Promise<void>;
 }
 
 // Parser local que evita el shift de zona horaria de new Date("YYYY-MM-DD").
@@ -155,7 +155,7 @@ export function useTemario(curso: Curso): UseTemarioReturn {
   //   2) upsert de cada semana
   //   3) borrar semanas excedentes (si redujo el número total)
   const save = useCallback(
-    async (data: TemarioCurso) => {
+    async (data: Omit<TemarioCurso, "actualizadoEn">) => {
       await upsertTemarioCurso(data.curso, data.fechaInicio, data.actualizadoPor);
       for (const semana of data.semanas) {
         await upsertSemanaTemario(data.curso, semana);

@@ -67,7 +67,7 @@ export interface ProfeGuia {
   nombre: string;
   telefono?: string;
   sucursal: Sucursal;
-  activo: boolean;
+  activo?: boolean;
   fechaIngreso: string;
 }
 
@@ -132,12 +132,16 @@ export interface Profesor {
 // Cada cambio queda registrado en historialAsignaciones.
 export interface Instructor {
   id: string;                  // doc ID en Firestore
+  // Supabase: enlace con auth.users (UUID). null si todavía no se creó
+  // la cuenta de auth (el director marca authVerificado=true cuando ya
+  // existe el row en auth.users).
+  userId?: string | null;
   username: string;            // ej: "instructor.gregory"
   email: string;               // ej: "instructor.gregory@operoeducator.internal"
   nombreCompleto: string;      // ej: "Gregory Delgado"
   telefono?: string;
   sucursalActual: Sucursal;
-  activo: boolean;
+  activo?: boolean;
   fechaIngreso: string;        // ISO date
   fechaCreacion: string;       // ISO datetime - cuándo se creó el perfil
   creadoPor: string;           // username del director que lo creó

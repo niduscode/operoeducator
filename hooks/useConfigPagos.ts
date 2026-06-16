@@ -10,6 +10,9 @@ interface UseConfigPagosReturn {
   isLoading: boolean;
   error: string | null;
   updateConfig: (patch: Partial<ConfigPagos>, actualizadoPor: string) => Promise<void>;
+  // Compat: alias del componente /configuracion/pagos que usa la API vieja.
+  // Recibe el ConfigPagos completo (no patch).
+  save: (config: Partial<ConfigPagos>, actualizadoPor: string) => Promise<void>;
 }
 
 export function useConfigPagos(): UseConfigPagosReturn {
@@ -65,7 +68,7 @@ export function useConfigPagos(): UseConfigPagosReturn {
   );
 
   return useMemo(
-    () => ({ config, isLoading, error, updateConfig }),
+    () => ({ config, isLoading, error, updateConfig, save: updateConfig }),
     [config, isLoading, error, updateConfig]
   );
 }

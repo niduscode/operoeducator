@@ -135,8 +135,10 @@ export default function InstructorForm({
         sucursalActual,
         activo,
         fechaIngreso,
-        // En edit conservamos los metadatos originales; en create los seteamos.
-        fechaCreacion: initial?.fechaCreacion ?? new Date().toISOString(),
+        // fechaCreacion ya NO se setea client-side: lo maneja Postgres via
+        // created_at NOT NULL DEFAULT now() (ver schema 0002). Mantenemos
+        // la columna en el type como derived field de created_at.
+        userId: initial?.userId ?? null,
         creadoPor: initial?.creadoPor ?? currentDirectorUsername,
         // En create siempre arranca en false (el director marca a mano cuando
         // crea la cuenta de Auth). En edit preservamos lo que ya estaba.

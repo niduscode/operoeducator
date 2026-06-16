@@ -54,7 +54,8 @@ export async function seedInstructoresPrueba(
         sucursalActual: row.sucursal,
         activo: true,
         fechaIngreso,
-        fechaCreacion,
+        // fechaCreacion ya no se pasa: lo maneja Postgres (created_at default).
+        userId: null,
         creadoPor,
         authVerificado: false,
       });

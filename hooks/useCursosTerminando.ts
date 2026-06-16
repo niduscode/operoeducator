@@ -32,6 +32,10 @@ interface UseCursosTerminandoReturn {
   proximos: AlumnoCertificacionProxima[];
   isLoading: boolean;
   error: string | null;
+  // Aliases compat con la API vieja (CertificacionesBanner usa estos).
+  cursosCertificandoseHoy: Alumno[];
+  cursosCertificadosRecientes: AlumnoCertificacionReciente[];
+  cursosProximosATerminar: AlumnoCertificacionProxima[];
 }
 
 // Cuántas clases dura el curso según los precios configurados; si no hay
@@ -187,6 +191,16 @@ export function useCursosTerminando(
     recientes.sort((x, y) => x.diasAtras - y.diasAtras);
     proximos.sort((x, y) => x.diasAdelante - y.diasAdelante);
 
-    return { hoy, recientes, proximos, isLoading, error };
+    return {
+      hoy,
+      recientes,
+      proximos,
+      isLoading,
+      error,
+      // Aliases compat
+      cursosCertificandoseHoy: hoy,
+      cursosCertificadosRecientes: recientes,
+      cursosProximosATerminar: proximos,
+    };
   }, [alumnos, precios, isLoading, error]);
 }

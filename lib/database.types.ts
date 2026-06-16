@@ -31,7 +31,7 @@ export interface InstructorRow {
   nombre_completo: string;
   telefono: string | null;
   sucursal_actual: Sucursal;
-  activo: boolean;
+  activo?: boolean;
   fecha_ingreso: string;       // ISO date
   creado_por: string;
   auth_verificado: boolean;
@@ -44,7 +44,7 @@ export interface ProfeGuiaRow {
   nombre: string;
   telefono: string | null;
   sucursal: Sucursal;
-  activo: boolean;
+  activo?: boolean;
   fecha_ingreso: string;
   created_at: string;
   updated_at: string;
@@ -60,7 +60,7 @@ export interface AlumnoRow {
   fecha: string;                // fecha de ingreso
   profe_guia_id: string | null;
   instructor_id: string | null;
-  activo: boolean;
+  activo?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -224,7 +224,7 @@ export interface Instructor {
   nombreCompleto: string;
   telefono?: string;
   sucursalActual: Sucursal;
-  activo: boolean;
+  activo?: boolean;
   fechaIngreso: string;
   fechaCreacion: string;
   creadoPor: string;
@@ -236,7 +236,7 @@ export interface ProfeGuia {
   nombre: string;
   telefono?: string;
   sucursal: Sucursal;
-  activo: boolean;
+  activo?: boolean;
   fechaIngreso: string;
 }
 
@@ -250,7 +250,7 @@ export interface Alumno {
   fecha: string;
   profeGuiaId?: string;
   instructorId?: string;
-  activo: boolean;
+  activo?: boolean;
 }
 
 export interface HistorialAsignacion {

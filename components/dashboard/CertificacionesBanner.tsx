@@ -51,7 +51,7 @@ export default function CertificacionesBanner({
             <Linea
               icono="🏁"
               titulo="Certificados los últimos 3 días (pendiente liquidar)"
-              alumnos={cursosCertificadosRecientes}
+              alumnos={cursosCertificadosRecientes.map((x) => x.alumno)}
               tono="amber"
             />
           )}
@@ -59,7 +59,7 @@ export default function CertificacionesBanner({
             <Linea
               icono="⏳"
               titulo="Próximos a terminar (≤ 7 días)"
-              alumnos={cursosProximosATerminar}
+              alumnos={cursosProximosATerminar.map((x) => x.alumno)}
               tono="slate"
             />
           )}

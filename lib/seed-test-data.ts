@@ -217,7 +217,8 @@ async function asegurarInstructorEnSucursal(
     sucursalActual: sucursal,
     activo: true,
     fechaIngreso,
-    fechaCreacion: isoDateTime(new Date()),
+    // fechaCreacion: la maneja Postgres (created_at).
+    userId: null,
     creadoPor,
     authVerificado: false,
   });

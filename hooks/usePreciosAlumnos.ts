@@ -16,6 +16,11 @@ interface UsePreciosAlumnosReturn {
     patch: Partial<PreciosAlumnos>,
     actualizadoPor: string
   ) => Promise<void>;
+  // Compat con código viejo que llama save().
+  save: (
+    patch: Partial<PreciosAlumnos>,
+    actualizadoPor: string
+  ) => Promise<void>;
 }
 
 export function usePreciosAlumnos(): UsePreciosAlumnosReturn {
@@ -80,7 +85,7 @@ export function usePreciosAlumnos(): UsePreciosAlumnosReturn {
   );
 
   return useMemo(
-    () => ({ precios, isLoading, error, updatePrecios }),
+    () => ({ precios, isLoading, error, updatePrecios, save: updatePrecios }),
     [precios, isLoading, error, updatePrecios]
   );
 }

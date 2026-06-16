@@ -7,14 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "deploy": "firebase deploy --only hosting",
-    "deploy:all": "firebase deploy",
-    "deploy:rules": "firebase deploy --only firestore:rules,storage"
+    "supabase:migrate": "supabase db push --linked",
+    "deploy": "vercel --prod",
+    "deploy:preview": "vercel"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
-    "firebase": "^12.12.1",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
