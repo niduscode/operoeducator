@@ -32,17 +32,8 @@ import {
   TURNOS,
   emailToUsername,
 } from "@/lib/types";
+import { supabase } from "@/lib/supabase";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import {
-  EVALUACIONES_ALUMNOS_COLLECTION,
   registrarAsistenciasAlumnosBatch,
   registrarEvaluacion,
   updateEvaluacion,
@@ -926,35 +917,58 @@ function EvaluacionTab(props: EvaluacionTabProps) {
 
   useEffect(() => {
     if (!sucursal) return;
-    const q = query(
-      collection(db, EVALUACIONES_ALUMNOS_COLLECTION),
-      where("sucursal", "==", sucursal),
-      where("curso", "==", curso)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: EvaluacionAlumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            alumnoId: data.alumnoId ?? "",
-            fecha: data.fecha ?? "",
-            nota: typeof data.nota === "number" ? data.nota : 0,
-            observacion: data.observacion ?? "",
-            evaluadoPor: data.evaluadoPor ?? "",
-            sucursal: data.sucursal,
-            curso: data.curso,
-          };
-        });
-        setEvalsCurso(rows);
-      },
-      (err) => {
-        console.error("evaluaciones del curso onSnapshot:", err);
+    let cancelled = false;
+
+    const fetchAll = async () => {
+      const { data, error } = await supabase
+        .from("evaluaciones_alumnos")
+        .select("*")
+        .eq("sucursal", sucursal)
+        .eq("curso", curso);
+      if (cancelled) return;
+      if (error) {
+        console.error("evaluaciones del curso fetch:", error);
         onToast("No se pudieron cargar las evaluaciones.");
+        return;
       }
-    );
-    return () => unsub();
+      const rows: EvaluacionAlumno[] = (data ?? []).map((d) => ({
+        id: d.id as string,
+        alumnoId: d.alumno_id ?? "",
+        fecha: d.fecha ?? "",
+        nota: typeof d.nota === "number" ? Number(d.nota) : 0,
+        observacion: d.observacion ?? "",
+        evaluadoPor: d.evaluado_por ?? "",
+        sucursal: d.sucursal,
+        curso: d.curso,
+      }));
+      setEvalsCurso(rows);
+    };
+
+    void fetchAll();
+
+    const channel = supabase
+      .channel(`evaluaciones-${sucursal}-${curso}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "evaluaciones_alumnos",
+          filter: `sucursal=eq.${sucursal}`,
+        },
+        (payload) => {
+          // Filtrar por curso client-side ya que postgres_changes solo
+          // permite UN filter — el de sucursal es el más específico.
+          const row = (payload.new ?? payload.old) as { curso?: string };
+          if (!row?.curso || row.curso === curso) void fetchAll();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [sucursal, curso, onToast]);
 
   // Hoy: una eval por alumno (la del día).

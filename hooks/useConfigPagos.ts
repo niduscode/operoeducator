@@ -1,89 +1,71 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  doc,
-  onSnapshot,
-  DocumentSnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { ConfigPagos, TarifasPorCurso } from "@/lib/types";
-import {
-  CONFIG_PAGOS_COLLECTION,
-  saveConfigPagos as fsSave,
-} from "@/lib/firestore";
-
-interface SaveInput {
-  tarifasInstructor: TarifasPorCurso;
-  tarifasProfeGuia: TarifasPorCurso;
-  montoInstructorPrimerAlumno?: number;
-  montoInstructorAlumnoAdicional?: number;
-}
+import { supabase } from "@/lib/supabase";
+import { getConfigPagos, updateConfigPagos } from "@/lib/queries";
+import type { ConfigPagos } from "@/lib/database.types";
 
 interface UseConfigPagosReturn {
   config: ConfigPagos | null;
   isLoading: boolean;
   error: string | null;
-  save: (data: SaveInput, actualizadoPor: string) => Promise<void>;
+  updateConfig: (patch: Partial<ConfigPagos>, actualizadoPor: string) => Promise<void>;
 }
 
-// Suscripción reactiva al singleton "configPagos/default".
 export function useConfigPagos(): UseConfigPagosReturn {
   const [config, setConfig] = useState<ConfigPagos | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState<number>(0);
 
   useEffect(() => {
-    const ref = doc(db, CONFIG_PAGOS_COLLECTION, "default");
-    const unsub = onSnapshot(
-      ref,
-      (snap: DocumentSnapshot<DocumentData>) => {
-        if (!snap.exists()) {
-          setConfig(null);
-        } else {
-          const data = snap.data();
-          setConfig({
-            id: "default",
-            montoInstructorPrimerAlumno: Number(
-              data?.montoInstructorPrimerAlumno ?? 0
-            ),
-            montoInstructorAlumnoAdicional: Number(
-              data?.montoInstructorAlumnoAdicional ?? 0
-            ),
-            tarifasInstructor: {
-              Junior: Number(data?.tarifasInstructor?.Junior ?? 0),
-              Senior: Number(data?.tarifasInstructor?.Senior ?? 0),
-              Master: Number(data?.tarifasInstructor?.Master ?? 0),
-            },
-            tarifasProfeGuia: {
-              Junior: Number(data?.tarifasProfeGuia?.Junior ?? 0),
-              Senior: Number(data?.tarifasProfeGuia?.Senior ?? 0),
-              Master: Number(data?.tarifasProfeGuia?.Master ?? 0),
-            },
-            actualizadoPor: data?.actualizadoPor ?? "",
-            actualizadoEn: data?.actualizadoEn ?? "",
-          });
-        }
-        setIsLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("useConfigPagos onSnapshot:", err);
-        setError("No se pudo cargar la configuración de pagos.");
-        setIsLoading(false);
-      }
-    );
-    return () => unsub();
-  }, []);
+    let cancelled = false;
 
-  const save = useCallback(
-    (data: SaveInput, actualizadoPor: string) => fsSave(data, actualizadoPor),
+    const fetchConfig = async () => {
+      try {
+        const data = await getConfigPagos();
+        if (cancelled) return;
+        setConfig(data);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("useConfigPagos fetch:", err);
+        setConfig(null);
+        setError("No se pudo cargar la configuración de pagos.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    fetchConfig();
+
+    const channel = supabase
+      .channel("config-pagos-default")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "config_pagos", filter: "id=eq.default" },
+        () => {
+          fetchConfig();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [nonce]);
+
+  const updateConfig = useCallback(
+    async (patch: Partial<ConfigPagos>, actualizadoPor: string): Promise<void> => {
+      await updateConfigPagos(patch, actualizadoPor);
+      setNonce((n) => n + 1);
+    },
     []
   );
 
   return useMemo(
-    () => ({ config, isLoading, error, save }),
-    [config, isLoading, error, save]
+    () => ({ config, isLoading, error, updateConfig }),
+    [config, isLoading, error, updateConfig]
   );
 }

@@ -1,25 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import type { ProfeGuia, Sucursal } from "@/lib/database.types";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { ProfeGuia, Sucursal } from "@/lib/types";
-import {
-  PROFES_GUIAS_COLLECTION,
-  ProfeGuiaInput,
-  createProfeGuia as fsCreateProfeGuia,
-  updateProfeGuia as fsUpdateProfeGuia,
-  deleteProfeGuia as fsDeleteProfeGuia,
-  reactivateProfeGuia as fsReactivateProfeGuia,
-  createProfesGuiasMasivo as fsImportMasivo,
-} from "@/lib/firestore";
+  getProfesGuias,
+  getProfesGuiasPorSucursal,
+  createProfeGuia as sbCreateProfeGuia,
+  updateProfeGuia as sbUpdateProfeGuia,
+  deleteProfeGuia as sbDeleteProfeGuia,
+  reactivateProfeGuia as sbReactivateProfeGuia,
+  createProfesGuiasMasivo as sbImportMasivo,
+} from "@/lib/queries";
+
+export type ProfeGuiaInput = Omit<ProfeGuia, "id">;
 
 interface UseProfesGuiasReturn {
   profesGuias: ProfeGuia[];
@@ -49,60 +43,63 @@ export function useProfesGuias(
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
-    const base = collection(db, PROFES_GUIAS_COLLECTION);
-    const q = sucursal ? query(base, where("sucursal", "==", sucursal)) : base;
+    let cancelled = false;
+    setIsLoading(true);
 
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: ProfeGuia[] = snap.docs
-          .map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              nombre: data.nombre ?? "",
-              telefono: data.telefono ?? "",
-              sucursal: data.sucursal,
-              activo: data.activo ?? true,
-              fechaIngreso: data.fechaIngreso ?? "",
-            } as ProfeGuia;
-          })
-          .filter((p) => incluirInactivos || p.activo !== false);
-        setProfesGuias(rows);
-        setIsLoading(false);
+    (async () => {
+      try {
+        const rows = sucursal
+          ? await getProfesGuiasPorSucursal(sucursal)
+          : await getProfesGuias();
+        if (cancelled) return;
+        const filtered = rows.filter(
+          (p) => incluirInactivos || p.activo !== false
+        );
+        setProfesGuias(filtered);
         setError(null);
-      },
-      (err) => {
-        console.error("useProfesGuias onSnapshot:", err);
-        setError("No se pudieron cargar los profes guías en tiempo real.");
+        setIsLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("useProfesGuias fetch:", err);
+        setError("No se pudieron cargar los profes guías.");
         setIsLoading(false);
       }
-    );
+    })();
 
-    return () => unsub();
+    return () => {
+      cancelled = true;
+    };
   }, [sucursal, nonce, incluirInactivos]);
 
   const refetch = useCallback(() => setNonce((n) => n + 1), []);
   const createProfeGuia = useCallback(
-    (data: ProfeGuiaInput) => fsCreateProfeGuia(data),
+    async (data: ProfeGuiaInput) => {
+      const id = await sbCreateProfeGuia(data);
+      setNonce((n) => n + 1);
+      return id;
+    },
     []
   );
   const updateProfeGuia = useCallback(
-    (id: string, data: Partial<ProfeGuiaInput>) => fsUpdateProfeGuia(id, data),
+    async (id: string, data: Partial<ProfeGuiaInput>) => {
+      await sbUpdateProfeGuia(id, data);
+      setNonce((n) => n + 1);
+    },
     []
   );
-  const deleteProfeGuia = useCallback(
-    (id: string) => fsDeleteProfeGuia(id),
-    []
-  );
-  const reactivateProfeGuia = useCallback(
-    (id: string) => fsReactivateProfeGuia(id),
-    []
-  );
-  const importMasivo = useCallback(
-    (data: ProfeGuiaInput[]) => fsImportMasivo(data),
-    []
-  );
+  const deleteProfeGuia = useCallback(async (id: string) => {
+    await sbDeleteProfeGuia(id);
+    setNonce((n) => n + 1);
+  }, []);
+  const reactivateProfeGuia = useCallback(async (id: string) => {
+    await sbReactivateProfeGuia(id);
+    setNonce((n) => n + 1);
+  }, []);
+  const importMasivo = useCallback(async (data: ProfeGuiaInput[]) => {
+    const ids = await sbImportMasivo(data);
+    setNonce((n) => n + 1);
+    return ids;
+  }, []);
 
   return useMemo(
     () => ({

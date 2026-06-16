@@ -1,26 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import type {
   Alumno,
   AsistenciaAlumno,
   PagoCalculado,
   ProfeGuia,
+  Sucursal,
   TarifasPorCurso,
-} from "@/lib/types";
+} from "@/lib/database.types";
 import {
-  ALUMNOS_COLLECTION,
-  ASISTENCIAS_ALUMNOS_COLLECTION,
-  PROFES_GUIAS_COLLECTION,
+  getAlumnos,
+  getProfesGuias,
+  getAsistenciasEnRango,
+} from "@/lib/queries";
+import {
   construirPagoCalculado,
   filtrarAsistenciasParaProfe,
 } from "@/lib/firestore";
@@ -35,9 +29,15 @@ interface UsePagosProfesGuiasReturn {
 
 const TARIFAS_VACIAS: TarifasPorCurso = { Junior: 0, Senior: 0, Master: 0 };
 
+// Cálculo lineal del pago a profes guías del mes:
+//   tarifa por curso × alumnos asistidos (Presente/Tarde), atribuidos por
+//   profeGuiaIdSnapshot histórico — fallback al profeGuiaId actual del alumno
+//   para asistencias legacy. Listas grandes → fetch al montar + refetch via
+//   nonce, sin Realtime.
 export function usePagosProfesGuias(
   mes: number,
-  año: number
+  año: number,
+  sucursal?: Sucursal
 ): UsePagosProfesGuiasReturn {
   const { config, isLoading: configLoading } = useConfigPagos();
   const [profes, setProfes] = useState<ProfeGuia[]>([]);
@@ -48,116 +48,82 @@ export function usePagosProfesGuias(
   const [loadingAsist, setLoadingAsist] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Profes guías (todos; el filtro de activos se aplica al armar `pagos`).
+  // Si se pidió una sucursal, filtra al fetch para reducir payload.
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, PROFES_GUIAS_COLLECTION),
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: ProfeGuia[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            nombre: data.nombre ?? "",
-            telefono: data.telefono ?? "",
-            sucursal: data.sucursal,
-            activo: data.activo ?? true,
-            fechaIngreso: data.fechaIngreso ?? "",
-          };
-        });
-        setProfes(rows);
-        setLoadingProfes(false);
-      },
-      (err) => {
+    let cancelled = false;
+    setLoadingProfes(true);
+    (async () => {
+      try {
+        const rows = await getProfesGuias();
+        if (cancelled) return;
+        setProfes(sucursal ? rows.filter((p) => p.sucursal === sucursal) : rows);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
         console.error("usePagosProfesGuias profes:", err);
         setError("No se pudieron cargar los profes guías.");
-        setLoadingProfes(false);
+      } finally {
+        if (!cancelled) setLoadingProfes(false);
       }
-    );
-    return () => unsub();
-  }, []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sucursal]);
 
+  // Alumnos (incluye inactivos para fallback de asistencias legacy sin
+  // profeGuiaIdSnapshot).
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, ALUMNOS_COLLECTION),
-      (snap: QuerySnapshot<DocumentData>) => {
-        // Incluimos también alumnos inactivos: para asistencias legacy sin
-        // profeGuiaIdSnapshot necesitamos su profeGuiaId actual como fallback.
-        const rows: Alumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            nombre: data.nombre ?? "",
-            telefono: data.telefono ?? "",
-            sucursal: data.sucursal,
-            curso: data.curso,
-            horario: data.horario,
-            fecha: data.fecha ?? "",
-            profeGuiaId: data.profeGuiaId ?? "",
-            activo: data.activo ?? true,
-          };
-        });
-        setAlumnos(rows);
-        setLoadingAlumnos(false);
-      },
-      (err) => {
+    let cancelled = false;
+    setLoadingAlumnos(true);
+    (async () => {
+      try {
+        const rows = await getAlumnos();
+        if (cancelled) return;
+        setAlumnos(
+          sucursal ? rows.filter((a) => a.sucursal === sucursal) : rows
+        );
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
         console.error("usePagosProfesGuias alumnos:", err);
         setError("No se pudieron cargar los alumnos.");
-        setLoadingAlumnos(false);
+      } finally {
+        if (!cancelled) setLoadingAlumnos(false);
       }
-    );
-    return () => unsub();
-  }, []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sucursal]);
 
+  // Asistencias del mes, opcionalmente filtradas por sucursal.
   useEffect(() => {
+    let cancelled = false;
+    setLoadingAsist(true);
     const mm = String(mes).padStart(2, "0");
     const desde = `${año}-${mm}-01`;
     const ultimoDia = new Date(año, mes, 0).getDate();
     const hasta = `${año}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
-    setLoadingAsist(true);
-    const q = query(
-      collection(db, ASISTENCIAS_ALUMNOS_COLLECTION),
-      where("fecha", ">=", desde),
-      where("fecha", "<=", hasta)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: AsistenciaAlumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            alumnoId: data.alumnoId ?? "",
-            fecha: data.fecha ?? "",
-            estado: data.estado ?? "Presente",
-            observacion: data.observacion ?? "",
-            registradaPor: data.registradaPor ?? "",
-            sucursal: data.sucursal,
-            curso: data.curso,
-            turno: data.turno,
-            tarifaInstructorAplicada:
-              typeof data.tarifaInstructorAplicada === "number"
-                ? data.tarifaInstructorAplicada
-                : undefined,
-            tarifaProfeGuiaAplicada:
-              typeof data.tarifaProfeGuiaAplicada === "number"
-                ? data.tarifaProfeGuiaAplicada
-                : undefined,
-            profeGuiaIdSnapshot:
-              typeof data.profeGuiaIdSnapshot === "string"
-                ? data.profeGuiaIdSnapshot
-                : undefined,
-          };
-        });
+    (async () => {
+      try {
+        const rows = await getAsistenciasEnRango(sucursal ?? null, desde, hasta);
+        if (cancelled) return;
         setAsistencias(rows);
-        setLoadingAsist(false);
-      },
-      (err) => {
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
         console.error("usePagosProfesGuias asistencias:", err);
         setError("No se pudieron cargar las asistencias del mes.");
-        setLoadingAsist(false);
+      } finally {
+        if (!cancelled) setLoadingAsist(false);
       }
-    );
-    return () => unsub();
-  }, [mes, año]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mes, año, sucursal]);
 
   const pagos = useMemo<PagoCalculado[]>(() => {
     const tarifas = config?.tarifasProfeGuia ?? TARIFAS_VACIAS;

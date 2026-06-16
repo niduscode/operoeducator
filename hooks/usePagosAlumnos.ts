@@ -1,37 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import type { PagoAlumno, Sucursal } from "@/lib/database.types";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QueryConstraint,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { PagoAlumno, Sucursal } from "@/lib/types";
-import {
-  PAGOS_ALUMNOS_COLLECTION,
-  PagoAlumnoInput,
-  registrarPagoAlumno as fsRegistrar,
-  actualizarPagoAlumno as fsActualizar,
-  eliminarPagoAlumno as fsEliminar,
-} from "@/lib/firestore";
+  getPagosDelMes,
+  registrarPagoAlumno,
+  updatePagoAlumno,
+  deletePagoAlumno,
+} from "@/lib/queries";
+
+export type PagoAlumnoInput = Omit<PagoAlumno, "id" | "registradoEn">;
 
 interface UsePagosAlumnosReturn {
   pagos: PagoAlumno[];
   isLoading: boolean;
   error: string | null;
-  registrarPago: (data: PagoAlumnoInput) => Promise<string>;
-  actualizarPago: (id: string, data: Partial<PagoAlumnoInput>) => Promise<void>;
+  refetch: () => void;
+  registrar: (input: PagoAlumnoInput) => Promise<string>;
+  actualizar: (id: string, patch: Partial<PagoAlumnoInput>) => Promise<void>;
+  eliminar: (id: string) => Promise<void>;
+  // Aliases compat con código viejo (registrarPago/actualizarPago/eliminarPago).
+  registrarPago: (input: PagoAlumnoInput) => Promise<string>;
+  actualizarPago: (id: string, patch: Partial<PagoAlumnoInput>) => Promise<void>;
   eliminarPago: (id: string) => Promise<void>;
 }
 
-// Reactivo: filtra por mes/año (siempre) y opcionalmente por sucursal.
-// Las queries con tres `where` igualdad no requieren índice compuesto en
-// Firestore, así que esto se resuelve sin configuración adicional.
+// Pagos del mes filtrados por mes/año (siempre) y opcionalmente por sucursal.
+// No usa Realtime: refetch manual al montar y tras cada acción
+// (registrar/actualizar/eliminar). Para forzar refresco externo se expone
+// `refetch`, que internamente bumpea un nonce que dispara el efecto.
 export function usePagosAlumnos(
   mes: number,
   año: number,
@@ -40,71 +38,74 @@ export function usePagosAlumnos(
   const [pagos, setPagos] = useState<PagoAlumno[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState<number>(0);
+
+  const refetch = useCallback(() => {
+    setNonce((n) => n + 1);
+  }, []);
 
   useEffect(() => {
-    const constraints: QueryConstraint[] = [
-      where("mes", "==", mes),
-      where("año", "==", año),
-    ];
-    if (sucursal) constraints.push(where("sucursal", "==", sucursal));
-    const q = query(collection(db, PAGOS_ALUMNOS_COLLECTION), ...constraints);
+    let cancelled = false;
     setIsLoading(true);
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: PagoAlumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            alumnoId: data.alumnoId ?? "",
-            alumnoNombre: data.alumnoNombre ?? "",
-            curso: data.curso,
-            sucursal: data.sucursal,
-            mes: typeof data.mes === "number" ? data.mes : Number(data.mes) || 0,
-            año: typeof data.año === "number" ? data.año : Number(data.año) || 0,
-            monto: Number(data.monto) || 0,
-            fechaPago: data.fechaPago ?? "",
-            medioPago: data.medioPago ?? "Transferencia",
-            tipoPago: data.tipoPago ?? "Total",
-            comprobanteUrl: data.comprobanteUrl ?? "",
-            comprobanteNombre: data.comprobanteNombre ?? "",
-            observacion: data.observacion ?? "",
-            registradoPor: data.registradoPor ?? "",
-            registradoEn: data.registradoEn ?? "",
-          };
-        });
+    setError(null);
+    (async () => {
+      try {
+        const rows = await getPagosDelMes(año, mes, sucursal ?? undefined);
+        if (cancelled) return;
         setPagos(rows);
         setIsLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("usePagosAlumnos onSnapshot:", err);
-        setError("No se pudieron cargar los pagos del mes.");
+      } catch (err) {
+        if (cancelled) return;
+        console.error("usePagosAlumnos fetch:", err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "No se pudieron cargar los pagos del mes."
+        );
         setIsLoading(false);
       }
-    );
-    return () => unsub();
-  }, [mes, año, sucursal]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mes, año, sucursal, nonce]);
 
-  const registrarPago = useCallback(
-    (data: PagoAlumnoInput) => fsRegistrar(data),
+  const registrar = useCallback(
+    async (input: PagoAlumnoInput) => {
+      const id = await registrarPagoAlumno(input);
+      setNonce((n) => n + 1);
+      return id;
+    },
     []
   );
-  const actualizarPago = useCallback(
-    (id: string, data: Partial<PagoAlumnoInput>) => fsActualizar(id, data),
+
+  const actualizar = useCallback(
+    async (id: string, patch: Partial<PagoAlumnoInput>) => {
+      await updatePagoAlumno(id, patch);
+      setNonce((n) => n + 1);
+    },
     []
   );
-  const eliminarPago = useCallback((id: string) => fsEliminar(id), []);
+
+  const eliminar = useCallback(async (id: string) => {
+    await deletePagoAlumno(id);
+    setNonce((n) => n + 1);
+  }, []);
 
   return useMemo(
     () => ({
       pagos,
       isLoading,
       error,
-      registrarPago,
-      actualizarPago,
-      eliminarPago,
+      refetch,
+      registrar,
+      actualizar,
+      eliminar,
+      // Aliases compat
+      registrarPago: registrar,
+      actualizarPago: actualizar,
+      eliminarPago: eliminar,
     }),
-    [pagos, isLoading, error, registrarPago, actualizarPago, eliminarPago]
+    [pagos, isLoading, error, refetch, registrar, actualizar, eliminar]
   );
 }

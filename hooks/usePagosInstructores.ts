@@ -1,27 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   Alumno,
   AsistenciaAlumno,
   Instructor,
   PagoCalculado,
-} from "@/lib/types";
+  Sucursal,
+} from "@/lib/database.types";
 import {
-  ALUMNOS_COLLECTION,
-  ASISTENCIAS_ALUMNOS_COLLECTION,
-  INSTRUCTORES_COLLECTION,
-  construirPagoCalculadoInstructorEscalado,
-} from "@/lib/firestore";
+  getAlumnos,
+  getAsistenciasEnRango,
+  getInstructores,
+  getInstructoresPorSucursal,
+} from "@/lib/queries";
+import { construirPagoCalculadoInstructorEscalado } from "@/lib/firestore";
 import { useConfigPagos } from "@/hooks/useConfigPagos";
 
 interface UsePagosInstructoresReturn {
@@ -31,146 +24,117 @@ interface UsePagosInstructoresReturn {
   error: string | null;
 }
 
-// Calcula reactivamente los pagos del mes para todos los instructores activos
-// usando el MODELO NUEVO escalado (1er alumno + adicionales). Re-calcula
-// cuando cambian las asistencias del mes, los instructores, los alumnos
-// asignados (fallback legacy) o la configuración de montos.
+// Calcula los pagos del mes para todos los instructores activos usando el
+// MODELO escalado (1er alumno + adicionales).
+//
+// Estrategia v2 (Supabase):
+//  - Fetch one-shot al montar (y al re-bumpear el nonce) de:
+//      * instructores (filtrados por sucursal si se pasa)
+//      * alumnos (necesarios como fallback legacy para asistencias sin
+//        instructor_id_snapshot)
+//      * asistencias del mes (filtradas por sucursal en server si aplica)
+//  - No usa Realtime: esta es la vista de director/admin para liquidar el
+//    mes. Refetch manual via `nonce` si se cambia mes/año/sucursal o si se
+//    quiere refrescar tras una acción externa.
 export function usePagosInstructores(
   mes: number,
-  año: number
+  año: number,
+  sucursal?: Sucursal | null
 ): UsePagosInstructoresReturn {
   const { config, isLoading: configLoading } = useConfigPagos();
   const [instructores, setInstructores] = useState<Instructor[]>([]);
   const [asistencias, setAsistencias] = useState<AsistenciaAlumno[]>([]);
   const [alumnos, setAlumnos] = useState<Alumno[]>([]);
-  const [loadingInst, setLoadingInst] = useState(true);
-  const [loadingAsist, setLoadingAsist] = useState(true);
-  const [loadingAlumnos, setLoadingAlumnos] = useState(true);
+  const [loadingInst, setLoadingInst] = useState<boolean>(true);
+  const [loadingAsist, setLoadingAsist] = useState<boolean>(true);
+  const [loadingAlumnos, setLoadingAlumnos] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // nonce reservado para forzar refetch desde acciones externas si fuera
+  // necesario (mismo patrón que otros hooks v2).
+  const [nonce] = useState<number>(0);
 
-  // Sub a instructores.
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, INSTRUCTORES_COLLECTION),
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: Instructor[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            username: data.username ?? "",
-            email: data.email ?? "",
-            nombreCompleto: data.nombreCompleto ?? "",
-            telefono: data.telefono ?? "",
-            sucursalActual: data.sucursalActual,
-            activo: data.activo ?? true,
-            fechaIngreso: data.fechaIngreso ?? "",
-            fechaCreacion: data.fechaCreacion ?? "",
-            creadoPor: data.creadoPor ?? "",
-            authVerificado: data.authVerificado ?? false,
-          };
-        });
-        setInstructores(rows);
-        setLoadingInst(false);
-      },
-      (err) => {
-        console.error("usePagosInstructores instructores:", err);
-        setError("No se pudieron cargar los instructores.");
-        setLoadingInst(false);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  // Sub a alumnos (necesarios como fallback para asistencias legacy sin
-  // instructorIdSnapshot).
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, ALUMNOS_COLLECTION),
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: Alumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            nombre: data.nombre ?? "",
-            telefono: data.telefono ?? "",
-            sucursal: data.sucursal,
-            curso: data.curso,
-            horario: data.horario,
-            fecha: data.fecha ?? "",
-            profeGuiaId: data.profeGuiaId ?? "",
-            instructorId: data.instructorId ?? "",
-            activo: data.activo ?? true,
-          };
-        });
-        setAlumnos(rows);
-        setLoadingAlumnos(false);
-      },
-      (err) => {
-        console.error("usePagosInstructores alumnos:", err);
-        setError("No se pudieron cargar los alumnos.");
-        setLoadingAlumnos(false);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  // Sub a asistencias del mes.
-  useEffect(() => {
+  // Rango de fechas del mes (memoizado para evitar refetches innecesarios).
+  const { desde, hasta } = useMemo(() => {
     const mm = String(mes).padStart(2, "0");
-    const desde = `${año}-${mm}-01`;
+    const d = `${año}-${mm}-01`;
     const ultimoDia = new Date(año, mes, 0).getDate();
-    const hasta = `${año}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
-
-    setLoadingAsist(true);
-    const q = query(
-      collection(db, ASISTENCIAS_ALUMNOS_COLLECTION),
-      where("fecha", ">=", desde),
-      where("fecha", "<=", hasta)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: AsistenciaAlumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            alumnoId: data.alumnoId ?? "",
-            fecha: data.fecha ?? "",
-            estado: data.estado ?? "Presente",
-            observacion: data.observacion ?? "",
-            registradaPor: data.registradaPor ?? "",
-            sucursal: data.sucursal,
-            curso: data.curso,
-            turno: data.turno,
-            tarifaInstructorAplicada:
-              typeof data.tarifaInstructorAplicada === "number"
-                ? data.tarifaInstructorAplicada
-                : undefined,
-            tarifaProfeGuiaAplicada:
-              typeof data.tarifaProfeGuiaAplicada === "number"
-                ? data.tarifaProfeGuiaAplicada
-                : undefined,
-            profeGuiaIdSnapshot:
-              typeof data.profeGuiaIdSnapshot === "string"
-                ? data.profeGuiaIdSnapshot
-                : undefined,
-            instructorIdSnapshot:
-              typeof data.instructorIdSnapshot === "string"
-                ? data.instructorIdSnapshot
-                : undefined,
-          };
-        });
-        setAsistencias(rows);
-        setLoadingAsist(false);
-      },
-      (err) => {
-        console.error("usePagosInstructores asistencias:", err);
-        setError("No se pudieron cargar las asistencias del mes.");
-        setLoadingAsist(false);
-      }
-    );
-    return () => unsub();
+    const h = `${año}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
+    return { desde: d, hasta: h };
   }, [mes, año]);
+
+  // Fetch de instructores (opcionalmente filtrados por sucursal).
+  const refetchInstructores = useCallback(async () => {
+    setLoadingInst(true);
+    try {
+      const rows = sucursal
+        ? await getInstructoresPorSucursal(sucursal)
+        : await getInstructores();
+      setInstructores(rows);
+      setError(null);
+    } catch (err) {
+      console.error("usePagosInstructores instructores:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "No se pudieron cargar los instructores."
+      );
+    } finally {
+      setLoadingInst(false);
+    }
+  }, [sucursal]);
+
+  useEffect(() => {
+    void refetchInstructores();
+  }, [refetchInstructores, nonce]);
+
+  // Fetch de alumnos (todos — necesarios como fallback legacy para
+  // asistencias sin instructor_id_snapshot).
+  const refetchAlumnos = useCallback(async () => {
+    setLoadingAlumnos(true);
+    try {
+      const rows = await getAlumnos();
+      setAlumnos(rows);
+    } catch (err) {
+      console.error("usePagosInstructores alumnos:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "No se pudieron cargar los alumnos."
+      );
+    } finally {
+      setLoadingAlumnos(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetchAlumnos();
+  }, [refetchAlumnos, nonce]);
+
+  // Fetch de asistencias del mes (filtradas por sucursal en server si aplica).
+  const refetchAsistencias = useCallback(async () => {
+    setLoadingAsist(true);
+    try {
+      const rows = await getAsistenciasEnRango(
+        sucursal ?? null,
+        desde,
+        hasta
+      );
+      setAsistencias(rows);
+    } catch (err) {
+      console.error("usePagosInstructores asistencias:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "No se pudieron cargar las asistencias del mes."
+      );
+    } finally {
+      setLoadingAsist(false);
+    }
+  }, [sucursal, desde, hasta]);
+
+  useEffect(() => {
+    void refetchAsistencias();
+  }, [refetchAsistencias, nonce]);
 
   const pagos = useMemo<PagoCalculado[]>(() => {
     const montoPrimero = config?.montoInstructorPrimerAlumno ?? 0;

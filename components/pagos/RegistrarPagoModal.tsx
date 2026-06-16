@@ -1,13 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
@@ -20,10 +14,7 @@ import type {
   TipoPagoAlumno,
 } from "@/lib/types";
 import { TIPOS_PAGO_ALUMNO } from "@/lib/types";
-import {
-  PAGOS_ALUMNOS_COLLECTION,
-  type PagoAlumnoInput,
-} from "@/lib/firestore";
+import { type PagoAlumnoInput } from "@/lib/firestore";
 import {
   COMPROBANTE_MAX_BYTES,
   COMPROBANTE_MIME_TYPES,
@@ -154,27 +145,28 @@ export default function RegistrarPagoModal({
     }
     let cancelado = false;
     setChequeando(true);
-    const q = query(
-      collection(db, PAGOS_ALUMNOS_COLLECTION),
-      where("alumnoId", "==", alumnoId),
-      where("mes", "==", mes),
-      where("año", "==", año)
-    );
-    getDocs(q)
-      .then((snap) => {
+    // Supabase: anio en vez de año (col en snake_case en BD).
+    supabase
+      .from("pagos_alumnos")
+      .select("id, monto, tipo_pago")
+      .eq("alumno_id", alumnoId)
+      .eq("mes", mes)
+      .eq("anio", año)
+      .then(({ data, error }) => {
         if (cancelado) return;
-        const rows = snap.docs
+        if (error) {
+          console.error("chequeo pagos existentes:", error);
+          setPagosExistentes([]);
+          return;
+        }
+        const rows = (data ?? [])
           .filter((d) => d.id !== initialPago?.id)
           .map((d) => ({
-            id: d.id,
-            monto: Number(d.data()?.monto ?? 0),
-            tipoPago: (d.data()?.tipoPago as string | undefined) ?? "Total",
+            id: d.id as string,
+            monto: Number(d.monto ?? 0),
+            tipoPago: (d.tipo_pago as string | undefined) ?? "Total",
           }));
         setPagosExistentes(rows);
-      })
-      .catch((err) => {
-        console.error("chequeo pagos existentes:", err);
-        if (!cancelado) setPagosExistentes([]);
       })
       .finally(() => {
         if (!cancelado) setChequeando(false);

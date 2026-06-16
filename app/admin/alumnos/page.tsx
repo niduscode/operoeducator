@@ -2,14 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import BackButton from "@/components/ui/BackButton";
 import Card from "@/components/ui/Card";
 import SearchableTable, {
@@ -19,7 +12,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAlumnos } from "@/hooks/useAlumnos";
 import { useProfesGuias } from "@/hooks/useProfesGuias";
 import { useInstructores } from "@/hooks/useInstructores";
-import { db } from "@/lib/firebase";
 import {
   Alumno,
   AsistenciaAlumno,
@@ -27,7 +19,6 @@ import {
   SUCURSALES,
   Sucursal,
 } from "@/lib/types";
-import { ASISTENCIAS_ALUMNOS_COLLECTION } from "@/lib/firestore";
 
 type EstadoFiltro = EstadoAsistencia | "Sin marcar" | "Todos";
 type ProfesionalRol = "instructor" | "profeGuia" | "sin-asignar";
@@ -66,58 +57,65 @@ export default function AdminAlumnosPage() {
   const { profesGuias } = useProfesGuias(null, { incluirInactivos: true });
   const { instructores } = useInstructores();
 
-  // Asistencias del día a nivel global (todas las sucursales). El volumen es
-  // bajo (≤ 100/día), así que un onSnapshot directo está bien.
+  // Asistencias del día a nivel global (todas las sucursales). Volumen bajo
+  // (≤100/día). Usamos fetch + Realtime para que cambios entrantes
+  // (instructores marcando asistencia en otras sucursales) aparezcan al
+  // toque sin recargar.
   const [asistenciasHoy, setAsistenciasHoy] = useState<AsistenciaAlumno[]>([]);
   const [asistLoading, setAsistLoading] = useState(true);
   useEffect(() => {
+    let cancelled = false;
     setAsistLoading(true);
-    const q = query(
-      collection(db, ASISTENCIAS_ALUMNOS_COLLECTION),
-      where("fecha", "==", fecha)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: AsistenciaAlumno[] = snap.docs.map((d) => {
-          const v = d.data();
-          return {
-            id: d.id,
-            alumnoId: v.alumnoId ?? "",
-            fecha: v.fecha ?? "",
-            estado: (v.estado as EstadoAsistencia) ?? "Presente",
-            observacion: v.observacion ?? "",
-            registradaPor: v.registradaPor ?? "",
-            sucursal: v.sucursal,
-            curso: v.curso,
-            turno: v.turno,
-            tarifaInstructorAplicada:
-              typeof v.tarifaInstructorAplicada === "number"
-                ? v.tarifaInstructorAplicada
-                : undefined,
-            tarifaProfeGuiaAplicada:
-              typeof v.tarifaProfeGuiaAplicada === "number"
-                ? v.tarifaProfeGuiaAplicada
-                : undefined,
-            profeGuiaIdSnapshot:
-              typeof v.profeGuiaIdSnapshot === "string"
-                ? v.profeGuiaIdSnapshot
-                : undefined,
-            instructorIdSnapshot:
-              typeof v.instructorIdSnapshot === "string"
-                ? v.instructorIdSnapshot
-                : undefined,
-          };
-        });
-        setAsistenciasHoy(rows);
+
+    const fetchAll = async () => {
+      const { data, error } = await supabase
+        .from("asistencias_alumnos")
+        .select("*")
+        .eq("fecha", fecha);
+      if (cancelled) return;
+      if (error) {
+        console.error("admin/alumnos fetch:", error);
         setAsistLoading(false);
-      },
-      (err) => {
-        console.error("admin/alumnos onSnapshot:", err);
-        setAsistLoading(false);
+        return;
       }
-    );
-    return () => unsub();
+      const rows: AsistenciaAlumno[] = (data ?? []).map((v) => ({
+        id: v.id as string,
+        alumnoId: v.alumno_id ?? "",
+        fecha: v.fecha ?? "",
+        estado: (v.estado as EstadoAsistencia) ?? "Presente",
+        observacion: v.observacion ?? "",
+        registradaPor: v.registrada_por ?? "",
+        sucursal: v.sucursal,
+        curso: v.curso,
+        turno: v.turno,
+        tarifaInstructorAplicada:
+          typeof v.tarifa_instructor_aplicada === "number" ? v.tarifa_instructor_aplicada : undefined,
+        tarifaProfeGuiaAplicada:
+          typeof v.tarifa_profe_guia_aplicada === "number" ? v.tarifa_profe_guia_aplicada : undefined,
+        profeGuiaIdSnapshot: typeof v.profe_guia_id_snapshot === "string" ? v.profe_guia_id_snapshot : undefined,
+        instructorIdSnapshot: typeof v.instructor_id_snapshot === "string" ? v.instructor_id_snapshot : undefined,
+      }));
+      setAsistenciasHoy(rows);
+      setAsistLoading(false);
+    };
+
+    void fetchAll();
+
+    const channel = supabase
+      .channel(`admin-asistencias-${fecha}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "asistencias_alumnos", filter: `fecha=eq.${fecha}` },
+        () => {
+          void fetchAll();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [fecha]);
 
   // Filtros UI.

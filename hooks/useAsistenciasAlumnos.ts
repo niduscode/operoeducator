@@ -1,23 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import type { AsistenciaAlumno, Sucursal } from "@/lib/database.types";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { AsistenciaAlumno, Sucursal } from "@/lib/types";
-import {
-  ASISTENCIAS_ALUMNOS_COLLECTION,
-  AsistenciaAlumnoInput,
-  registrarAsistenciaAlumno as fsRegistrar,
-  updateAsistenciaAlumno as fsUpdate,
-  deleteAsistenciaAlumno as fsDelete,
-} from "@/lib/firestore";
+  registrarAsistenciaAlumno,
+  updateAsistenciaAlumno,
+  deleteAsistenciaAlumno,
+  getAsistenciasDelDia,
+} from "@/lib/queries";
+
+type AsistenciaAlumnoInput = Omit<AsistenciaAlumno, "id">;
 
 interface UseAsistenciasAlumnosReturn {
   asistencias: AsistenciaAlumno[];
@@ -38,72 +31,77 @@ export function useAsistenciasAlumnos(
   const [asistencias, setAsistencias] = useState<AsistenciaAlumno[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState<number>(0);
 
   useEffect(() => {
     if (!sucursal || !fecha) {
       setAsistencias([]);
       setIsLoading(false);
+      setError(null);
       return;
     }
+
+    let cancelled = false;
     setIsLoading(true);
-    const q = query(
-      collection(db, ASISTENCIAS_ALUMNOS_COLLECTION),
-      where("sucursal", "==", sucursal),
-      where("fecha", "==", fecha)
-    );
 
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: AsistenciaAlumno[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            alumnoId: data.alumnoId ?? "",
-            fecha: data.fecha ?? "",
-            estado: data.estado ?? "Presente",
-            observacion: data.observacion ?? "",
-            registradaPor: data.registradaPor ?? "",
-            sucursal: data.sucursal,
-            curso: data.curso,
-            turno: data.turno,
-            tarifaInstructorAplicada:
-              typeof data.tarifaInstructorAplicada === "number"
-                ? data.tarifaInstructorAplicada
-                : undefined,
-            tarifaProfeGuiaAplicada:
-              typeof data.tarifaProfeGuiaAplicada === "number"
-                ? data.tarifaProfeGuiaAplicada
-                : undefined,
-            profeGuiaIdSnapshot:
-              typeof data.profeGuiaIdSnapshot === "string"
-                ? data.profeGuiaIdSnapshot
-                : undefined,
-          };
-        });
+    (async () => {
+      try {
+        const rows = await getAsistenciasDelDia(sucursal, fecha);
+        if (cancelled) return;
         setAsistencias(rows);
-        setIsLoading(false);
         setError(null);
-      },
-      (err) => {
-        console.error("useAsistenciasAlumnos onSnapshot:", err);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("useAsistenciasAlumnos fetch:", err);
         setError("No se pudieron cargar las asistencias del día.");
-        setIsLoading(false);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-    );
+    })();
 
-    return () => unsub();
-  }, [sucursal, fecha]);
+    const channel = supabase
+      .channel(`asistencias-alumnos-dia-${sucursal}-${fecha}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "asistencias_alumnos",
+          filter: `sucursal=eq.${sucursal}`,
+        },
+        () => {
+          setNonce((n) => n + 1);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [sucursal, fecha, nonce]);
 
   const registrar = useCallback(
-    (data: AsistenciaAlumnoInput) => fsRegistrar(data),
+    async (data: AsistenciaAlumnoInput) => {
+      const id = await registrarAsistenciaAlumno(data);
+      setNonce((n) => n + 1);
+      return id;
+    },
     []
   );
+
   const actualizar = useCallback(
-    (id: string, data: Partial<AsistenciaAlumnoInput>) => fsUpdate(id, data),
+    async (id: string, data: Partial<AsistenciaAlumnoInput>) => {
+      await updateAsistenciaAlumno(id, data);
+      setNonce((n) => n + 1);
+    },
     []
   );
-  const eliminar = useCallback((id: string) => fsDelete(id), []);
+
+  const eliminar = useCallback(async (id: string) => {
+    await deleteAsistenciaAlumno(id);
+    setNonce((n) => n + 1);
+  }, []);
 
   return useMemo(
     () => ({ asistencias, isLoading, error, registrar, actualizar, eliminar }),

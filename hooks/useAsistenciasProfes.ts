@@ -1,22 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { AsistenciaProfeGuia, Sucursal } from "@/lib/types";
-import {
-  ASISTENCIAS_PROFES_GUIAS_COLLECTION,
-  AsistenciaProfeGuiaInput,
-  registrarAsistenciaProfe as fsRegistrar,
-  updateAsistenciaProfe as fsUpdate,
-} from "@/lib/firestore";
+  getAsistenciasProfesDelDia,
+  registrarAsistenciaProfe,
+  updateAsistenciaProfe,
+  deleteAsistenciaProfe,
+} from "@/lib/queries";
+import type { AsistenciaProfeGuia, Sucursal } from "@/lib/database.types";
+
+type AsistenciaProfeGuiaInput = Omit<AsistenciaProfeGuia, "id">;
 
 interface UseAsistenciasProfesReturn {
   asistencias: AsistenciaProfeGuia[];
@@ -27,10 +21,9 @@ interface UseAsistenciasProfesReturn {
     id: string,
     data: Partial<AsistenciaProfeGuiaInput>
   ) => Promise<void>;
+  eliminar: (id: string) => Promise<void>;
 }
 
-// Suscripción reactiva a las asistencias de profes guías para una sucursal y
-// fecha. La toma el instructor desde su aula virtual.
 export function useAsistenciasProfes(
   sucursal: Sucursal | null | undefined,
   fecha: string
@@ -39,6 +32,28 @@ export function useAsistenciasProfes(
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  const refetch = useCallback(async () => {
+    if (!sucursal || !fecha) {
+      setAsistencias([]);
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const rows = await getAsistenciasProfesDelDia(sucursal, fecha);
+      setAsistencias(rows);
+      setError(null);
+    } catch (err) {
+      console.error("useAsistenciasProfes refetch:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "No se pudieron cargar las asistencias de profes guías."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sucursal, fecha]);
+
   useEffect(() => {
     if (!sucursal || !fecha) {
       setAsistencias([]);
@@ -46,52 +61,56 @@ export function useAsistenciasProfes(
       return;
     }
     setIsLoading(true);
-    const q = query(
-      collection(db, ASISTENCIAS_PROFES_GUIAS_COLLECTION),
-      where("sucursal", "==", sucursal),
-      where("fecha", "==", fecha)
-    );
+    void refetch();
 
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: AsistenciaProfeGuia[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            profeGuiaId: data.profeGuiaId ?? "",
-            fecha: data.fecha ?? "",
-            estado: data.estado ?? "Presente",
-            observacion: data.observacion ?? "",
-            registradaPor: data.registradaPor ?? "",
-            sucursal: data.sucursal,
-          };
-        });
-        setAsistencias(rows);
-        setIsLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("useAsistenciasProfes onSnapshot:", err);
-        setError("No se pudieron cargar las asistencias de profes guías.");
-        setIsLoading(false);
-      }
-    );
+    const channel = supabase
+      .channel(`asistencias-profes-${sucursal}-${fecha}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "asistencias_profes_guias",
+          filter: `sucursal=eq.${sucursal}`,
+        },
+        () => {
+          void refetch();
+        }
+      )
+      .subscribe();
 
-    return () => unsub();
-  }, [sucursal, fecha]);
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sucursal, fecha, refetch]);
 
   const registrar = useCallback(
-    (data: AsistenciaProfeGuiaInput) => fsRegistrar(data),
-    []
+    async (data: AsistenciaProfeGuiaInput) => {
+      const id = await registrarAsistenciaProfe(data);
+      await refetch();
+      return id;
+    },
+    [refetch]
   );
+
   const actualizar = useCallback(
-    (id: string, data: Partial<AsistenciaProfeGuiaInput>) => fsUpdate(id, data),
-    []
+    async (id: string, data: Partial<AsistenciaProfeGuiaInput>) => {
+      await updateAsistenciaProfe(id, data);
+      await refetch();
+    },
+    [refetch]
+  );
+
+  const eliminar = useCallback(
+    async (id: string) => {
+      await deleteAsistenciaProfe(id);
+      await refetch();
+    },
+    [refetch]
   );
 
   return useMemo(
-    () => ({ asistencias, isLoading, error, registrar, actualizar }),
-    [asistencias, isLoading, error, registrar, actualizar]
+    () => ({ asistencias, isLoading, error, registrar, actualizar, eliminar }),
+    [asistencias, isLoading, error, registrar, actualizar, eliminar]
   );
 }

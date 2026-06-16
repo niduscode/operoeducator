@@ -1,17 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { AsistenciaAlumno } from "@/lib/types";
-import { ASISTENCIAS_ALUMNOS_COLLECTION } from "@/lib/firestore";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { getAsistenciasEnRango } from "@/lib/queries";
+import type { AsistenciaAlumno } from "@/lib/database.types";
 import { useAlumnos } from "./useAlumnos";
 import { useProfesGuias } from "./useProfesGuias";
 import { useInstructores } from "./useInstructores";
@@ -19,8 +11,6 @@ import { useInstructores } from "./useInstructores";
 export interface AusenciaResuelta {
   asistencia: AsistenciaAlumno;
   alumnoNombre: string;
-  // Profesional a cargo. Preferimos los snapshots de la asistencia (verdad
-  // histórica), con fallback al estado actual del alumno cuando son legacy.
   profesionalNombre: string;
   profesionalRol: "instructor" | "profeGuia" | "sin-asignar";
 }
@@ -31,9 +21,6 @@ interface UseAusenciasDelMesReturn {
   error: string | null;
 }
 
-// Devuelve todas las asistencias con estado "Ausente" del mes/año dados,
-// resolviendo el profesional responsable. Sirve para que el admin entienda
-// por qué un instructor o profe guía cobrará menos en su liquidación.
 export function useAusenciasDelMes(
   mes: number,
   año: number
@@ -46,63 +33,29 @@ export function useAusenciasDelMes(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const mm = String(mes).padStart(2, "0");
-    const desde = `${año}-${mm}-01`;
-    const ultimoDia = new Date(año, mes, 0).getDate();
-    const hasta = `${año}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
+  const mm = String(mes).padStart(2, "0");
+  const desde = `${año}-${mm}-01`;
+  const ultimoDia = new Date(año, mes, 0).getDate();
+  const hasta = `${año}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
+
+  const fetchAusencias = useCallback(async () => {
     setIsLoading(true);
-    const q = query(
-      collection(db, ASISTENCIAS_ALUMNOS_COLLECTION),
-      where("estado", "==", "Ausente"),
-      where("fecha", ">=", desde),
-      where("fecha", "<=", hasta)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const data: AsistenciaAlumno[] = snap.docs.map((d) => {
-          const v = d.data();
-          return {
-            id: d.id,
-            alumnoId: v.alumnoId ?? "",
-            fecha: v.fecha ?? "",
-            estado: "Ausente",
-            observacion: v.observacion ?? "",
-            registradaPor: v.registradaPor ?? "",
-            sucursal: v.sucursal,
-            curso: v.curso,
-            turno: v.turno,
-            tarifaInstructorAplicada:
-              typeof v.tarifaInstructorAplicada === "number"
-                ? v.tarifaInstructorAplicada
-                : undefined,
-            tarifaProfeGuiaAplicada:
-              typeof v.tarifaProfeGuiaAplicada === "number"
-                ? v.tarifaProfeGuiaAplicada
-                : undefined,
-            profeGuiaIdSnapshot:
-              typeof v.profeGuiaIdSnapshot === "string"
-                ? v.profeGuiaIdSnapshot
-                : undefined,
-            instructorIdSnapshot:
-              typeof v.instructorIdSnapshot === "string"
-                ? v.instructorIdSnapshot
-                : undefined,
-          };
-        });
-        setRows(data);
-        setIsLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("useAusenciasDelMes:", err);
-        setError("No se pudieron cargar las ausencias del mes.");
-        setIsLoading(false);
-      }
-    );
-    return () => unsub();
-  }, [mes, año]);
+    try {
+      const todas = await getAsistenciasEnRango(null, desde, hasta);
+      const ausentes = todas.filter((a) => a.estado === "Ausente");
+      setRows(ausentes);
+      setError(null);
+    } catch (err) {
+      console.error("useAusenciasDelMes:", err);
+      setError("No se pudieron cargar las ausencias del mes.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [desde, hasta]);
+
+  useEffect(() => {
+    fetchAusencias();
+  }, [fetchAusencias]);
 
   return useMemo<UseAusenciasDelMesReturn>(() => {
     const alumnoPorId = new Map(alumnos.map((a) => [a.id, a]));
@@ -111,7 +64,6 @@ export function useAusenciasDelMes(
 
     const ausencias: AusenciaResuelta[] = rows.map((a) => {
       const alumno = alumnoPorId.get(a.alumnoId);
-      // Resolución del profesional: snapshots primero, luego estado actual.
       const instructorId =
         a.instructorIdSnapshot || alumno?.instructorId || "";
       const profeGuiaId = a.profeGuiaIdSnapshot || alumno?.profeGuiaId || "";
@@ -140,7 +92,6 @@ export function useAusenciasDelMes(
       };
     });
 
-    // Orden por fecha desc; empate → alumno.
     ausencias.sort((x, y) => {
       if (x.asistencia.fecha !== y.asistencia.fecha) {
         return y.asistencia.fecha.localeCompare(x.asistencia.fecha);

@@ -2,21 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Modal from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import CertificacionesBanner from "@/components/dashboard/CertificacionesBanner";
-import { db } from "@/lib/firebase";
 import { useAlumnos } from "@/hooks/useAlumnos";
 import { useProfesGuias } from "@/hooks/useProfesGuias";
 import { useTemario } from "@/hooks/useTemario";
@@ -28,7 +20,6 @@ import {
   ProfeGuia,
 } from "@/lib/types";
 import {
-  ASISTENCIAS_ALUMNOS_COLLECTION,
   asignarInstructorAAlumno,
   asignarProfeGuiaAAlumno,
 } from "@/lib/firestore";
@@ -532,6 +523,7 @@ function ProfesModal({
   const [submitting, setSubmitting] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const hoy = new Date();
     const mes = hoy.getMonth() + 1;
     const año = hoy.getFullYear();
@@ -540,32 +532,56 @@ function ProfesModal({
     const ultimoDia = new Date(año, mes, 0).getDate();
     const hasta = `${año}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
 
-    const q = query(
-      collection(db, ASISTENCIAS_ALUMNOS_COLLECTION),
-      where("registradaPor", "==", username),
-      where("fecha", ">=", desde),
-      where("fecha", "<=", hasta)
-    );
-    const unsub = onSnapshot(q, (snap: QuerySnapshot<DocumentData>) => {
+    const fetchAll = async () => {
+      const { data, error } = await supabase
+        .from("asistencias_alumnos")
+        .select("alumno_id, fecha")
+        .eq("registrada_por", username)
+        .gte("fecha", desde)
+        .lte("fecha", hasta);
+      if (cancelled) return;
+      if (error) {
+        console.error("InstructorDashboard fetch asistencias:", error);
+        return;
+      }
       const profeDeAlumno = new Map<string, string>();
       for (const a of alumnos) {
         if (a.profeGuiaId) profeDeAlumno.set(a.id, a.profeGuiaId);
       }
       const diasSet: Record<string, Set<string>> = {};
-      for (const d of snap.docs) {
-        const data = d.data();
-        const alumnoId = data.alumnoId as string;
-        const fecha = data.fecha as string;
-        const profeId = profeDeAlumno.get(alumnoId);
+      for (const r of data ?? []) {
+        const profeId = profeDeAlumno.get(r.alumno_id as string);
         if (!profeId) continue;
         if (!diasSet[profeId]) diasSet[profeId] = new Set();
-        diasSet[profeId].add(fecha);
+        diasSet[profeId].add(r.fecha as string);
       }
       const conteo: Record<string, number> = {};
       for (const k of Object.keys(diasSet)) conteo[k] = diasSet[k].size;
       setDiasPorProfe(conteo);
-    });
-    return () => unsub();
+    };
+
+    void fetchAll();
+
+    const channel = supabase
+      .channel(`instr-dash-asistencias-${username}-${año}-${mes}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "asistencias_alumnos",
+          filter: `registrada_por=eq.${username}`,
+        },
+        () => {
+          void fetchAll();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [alumnos, username]);
 
   const alumnosPorProfe = useMemo(() => {

@@ -1,96 +1,85 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import type { PagoRealizado, Sucursal } from "@/lib/database.types";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { PagoRealizado } from "@/lib/types";
-import {
-  PAGOS_REALIZADOS_COLLECTION,
-  type PagoRealizadoInput,
+  getPagosRealizadosDelMes,
   marcarPagoRealizado,
-  eliminarPagoRealizado,
-} from "@/lib/firestore";
+  deletePagoRealizado,
+} from "@/lib/queries";
+
+export type PagoRealizadoInput = Omit<PagoRealizado, "id" | "pagadoEn">;
 
 interface UsePagosRealizadosReturn {
   pagos: PagoRealizado[];
   isLoading: boolean;
   error: string | null;
+  refetch: () => void;
   marcar: (data: PagoRealizadoInput) => Promise<string>;
   desmarcar: (id: string) => Promise<void>;
-  // Lookup helper: dada una persona y tipo, devuelve el doc si está pagado.
   buscar: (
     tipo: "instructor" | "profeGuia",
     personaId: string
   ) => PagoRealizado | undefined;
+  marcarPagado: (data: PagoRealizadoInput) => Promise<string>;
+  eliminar: (id: string) => Promise<void>;
 }
 
-// Suscripción reactiva a los pagos realizados de un mes/año.
 export function usePagosRealizados(
   mes: number,
-  año: number
+  año: number,
+  sucursal?: Sucursal
 ): UsePagosRealizadosReturn {
   const [pagos, setPagos] = useState<PagoRealizado[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  const refetch = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
-    const q = query(
-      collection(db, PAGOS_REALIZADOS_COLLECTION),
-      where("mes", "==", mes),
-      where("año", "==", año)
-    );
+    let cancelled = false;
     setIsLoading(true);
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: PagoRealizado[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            tipo: (data.tipo as PagoRealizado["tipo"]) ?? "instructor",
-            personaId: data.personaId ?? "",
-            personaNombre: data.personaNombre ?? "",
-            sucursal: data.sucursal,
-            mes:
-              typeof data.mes === "number" ? data.mes : Number(data.mes) || 0,
-            año:
-              typeof data.año === "number" ? data.año : Number(data.año) || 0,
-            monto: Number(data.monto) || 0,
-            fechaPago: data.fechaPago ?? "",
-            pagadoPor: data.pagadoPor ?? "",
-            // pagadoEn puede ser Timestamp; lo dejamos como llegue para que la
-            // UI lo formatee con `new Date(p.pagadoEn)`.
-            pagadoEn: typeof data.pagadoEn === "string" ? data.pagadoEn : "",
-          };
-        });
+    getPagosRealizadosDelMes(año, mes, sucursal)
+      .then((rows) => {
+        if (cancelled) return;
         setPagos(rows);
-        setIsLoading(false);
         setError(null);
-      },
-      (err) => {
-        console.error("usePagosRealizados onSnapshot:", err);
-        setError("No se pudieron cargar los pagos realizados.");
         setIsLoading(false);
-      }
-    );
-    return () => unsub();
-  }, [mes, año]);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("usePagosRealizados fetch:", err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "No se pudieron cargar los pagos realizados."
+        );
+        setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mes, año, sucursal, nonce]);
 
   const marcar = useCallback(
-    (data: PagoRealizadoInput) => marcarPagoRealizado(data),
-    []
+    async (data: PagoRealizadoInput) => {
+      const id = await marcarPagoRealizado(data);
+      refetch();
+      return id;
+    },
+    [refetch]
   );
+
   const desmarcar = useCallback(
-    (id: string) => eliminarPagoRealizado(id),
-    []
+    async (id: string) => {
+      await deletePagoRealizado(id);
+      refetch();
+    },
+    [refetch]
   );
+
   const buscar = useCallback(
     (tipo: "instructor" | "profeGuia", personaId: string) =>
       pagos.find((p) => p.tipo === tipo && p.personaId === personaId),
@@ -98,7 +87,17 @@ export function usePagosRealizados(
   );
 
   return useMemo(
-    () => ({ pagos, isLoading, error, marcar, desmarcar, buscar }),
-    [pagos, isLoading, error, marcar, desmarcar, buscar]
+    () => ({
+      pagos,
+      isLoading,
+      error,
+      refetch,
+      marcar,
+      desmarcar,
+      buscar,
+      marcarPagado: marcar,
+      eliminar: desmarcar,
+    }),
+    [pagos, isLoading, error, refetch, marcar, desmarcar, buscar]
   );
 }

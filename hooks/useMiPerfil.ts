@@ -1,19 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  limit,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { useAuth } from "@/hooks/useAuth";
-import { INSTRUCTORES_COLLECTION } from "@/lib/firestore";
-import type { Instructor } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { getInstructorPorEmail } from "@/lib/queries";
+import { determineRole } from "@/lib/database.types";
+import type { Instructor } from "@/lib/database.types";
 
 interface UseMiPerfilReturn {
   perfil: Instructor | null;
@@ -21,71 +12,123 @@ interface UseMiPerfilReturn {
   error: string | null;
 }
 
-// Devuelve el perfil del instructor logueado a partir de su email Firebase Auth.
+// Devuelve el perfil del instructor logueado a partir de su email de Supabase Auth.
 // Para director y admin retorna null (no son instructores).
-// La suscripción es reactiva: si el director reasigna la sucursal, el dashboard
-// del instructor se actualiza al instante sin recargar.
+// La suscripción Realtime es reactiva: si el director reasigna la sucursal,
+// el dashboard del instructor se actualiza al instante sin recargar.
 export function useMiPerfil(): UseMiPerfilReturn {
-  const { userEmail, userRole, isLoading: authLoading } = useAuth();
   const [perfil, setPerfil] = useState<Instructor | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState<string>("");
+  const [role, setRole] = useState<ReturnType<typeof determineRole> | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+
+  // Guardamos la última referencia a fetch para que el handler de realtime
+  // siempre lea el email vigente sin recrear la suscripción.
+  const fetchRef = useRef<() => Promise<void>>(async () => {});
+
+  // Hidrata el estado de auth (email + rol) desde Supabase y se mantiene al día
+  // con onAuthStateChange. Equivalente al `useAuth` que consumía el hook viejo.
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (cancelled) return;
+        const e = data.user?.email ?? "";
+        setEmail(e);
+        setRole(e ? determineRole(e) : null);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn("useMiPerfil getUser:", err);
+        setEmail("");
+        setRole(null);
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    };
+
+    void hydrate();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const e = session?.user?.email ?? "";
+      setEmail(e);
+      setRole(e ? determineRole(e) : null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  const doFetch = useCallback(async () => {
+    if (!email) {
+      setPerfil(null);
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const row = await getInstructorPorEmail(email);
+      setPerfil(row);
+      setError(null);
+    } catch (err) {
+      console.error("useMiPerfil fetch:", err);
+      setError("No se pudo cargar tu perfil de instructor.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [email]);
 
   useEffect(() => {
-    // Esperamos a que useAuth termine de hidratar.
-    if (authLoading) {
+    fetchRef.current = doFetch;
+  }, [doFetch]);
+
+  useEffect(() => {
+    // Esperamos a que el auth termine de hidratar.
+    if (!authReady) {
       setIsLoading(true);
       return;
     }
 
     // No-instructores no tienen perfil que cargar.
-    if (userRole !== "instructor" || !userEmail) {
+    if (role !== "instructor" || !email) {
       setPerfil(null);
       setIsLoading(false);
       setError(null);
       return;
     }
 
-    const q = query(
-      collection(db, INSTRUCTORES_COLLECTION),
-      where("email", "==", userEmail),
-      limit(1)
-    );
+    setIsLoading(true);
+    void doFetch();
 
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        if (snap.empty) {
-          setPerfil(null);
-        } else {
-          const d = snap.docs[0];
-          const data = d.data();
-          setPerfil({
-            id: d.id,
-            username: data.username ?? "",
-            email: data.email ?? "",
-            nombreCompleto: data.nombreCompleto ?? "",
-            telefono: data.telefono ?? "",
-            sucursalActual: data.sucursalActual,
-            activo: data.activo ?? true,
-            fechaIngreso: data.fechaIngreso ?? "",
-            fechaCreacion: data.fechaCreacion ?? "",
-            creadoPor: data.creadoPor ?? "",
-            authVerificado: data.authVerificado ?? false,
-          });
+    // Realtime: si el director cambia la sucursal del instructor (o cualquier
+    // campo de su fila), refetcheamos. Filtramos por email server-side para
+    // no recibir cambios de otros instructores.
+    const channel = supabase
+      .channel(`mi-perfil-${email}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "instructores",
+          filter: `email=eq.${email}`,
+        },
+        () => {
+          void fetchRef.current();
         }
-        setIsLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("useMiPerfil onSnapshot:", err);
-        setError("No se pudo cargar tu perfil de instructor.");
-        setIsLoading(false);
-      }
-    );
+      )
+      .subscribe();
 
-    return () => unsub();
-  }, [userEmail, userRole, authLoading]);
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [email, role, authReady, doFetch]);
 
   return useMemo(
     () => ({ perfil, isLoading, error }),

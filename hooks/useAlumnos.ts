@@ -1,25 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import type { Alumno, Sucursal } from "@/lib/database.types";
 import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  QuerySnapshot,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import type { Alumno, Sucursal } from "@/lib/types";
-import {
-  ALUMNOS_COLLECTION,
-  AlumnoInput,
-  createAlumno as fsCreateAlumno,
-  updateAlumno as fsUpdateAlumno,
-  deleteAlumno as fsDeleteAlumno,
-  reactivateAlumno as fsReactivateAlumno,
-  createAlumnosMasivo as fsCreateAlumnosMasivo,
-} from "@/lib/firestore";
+  getAlumnos,
+  getAlumnosPorSucursal,
+  createAlumno as sbCreateAlumno,
+  updateAlumno as sbUpdateAlumno,
+  deleteAlumno as sbDeleteAlumno,
+  reactivateAlumno as sbReactivateAlumno,
+  createAlumnosMasivo as sbCreateAlumnosMasivo,
+} from "@/lib/queries";
+
+// Mantener compatibilidad con la firma anterior (Firestore exponía AlumnoInput).
+export type AlumnoInput = Omit<Alumno, "id">;
 
 interface UseAlumnosReturn {
   alumnos: Alumno[];
@@ -39,7 +34,7 @@ interface UseAlumnosOptions {
   incluirInactivos?: boolean;
 }
 
-// Si pasas `sucursal`, la suscripción se filtra server-side.
+// Si pasas `sucursal`, la query se filtra server-side.
 // Pensado para instructores (ven solo su sucursal); director/admin lo omiten.
 export function useAlumnos(
   sucursal?: Sucursal | null,
@@ -49,60 +44,81 @@ export function useAlumnos(
   const [alumnos, setAlumnos] = useState<Alumno[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  // Bump this to forzar re-suscripción cuando se pida refetch manual.
+  // Bump this to forzar refetch manual.
   const [nonce, setNonce] = useState(0);
 
+  // Guardamos la última referencia a fetch para que el handler de realtime
+  // siempre consuma el filtro vigente sin recrear la suscripción.
+  const fetchRef = useRef<() => Promise<void>>(async () => {});
+
+  const doFetch = useCallback(async () => {
+    try {
+      const rows = sucursal
+        ? await getAlumnosPorSucursal(sucursal)
+        : await getAlumnos();
+      const filtered = incluirInactivos
+        ? rows
+        : rows.filter((a) => a.activo !== false);
+      setAlumnos(filtered);
+      setError(null);
+    } catch (err) {
+      console.error("useAlumnos fetch:", err);
+      setError("No se pudieron cargar los alumnos.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sucursal, incluirInactivos]);
+
   useEffect(() => {
-    const base = collection(db, ALUMNOS_COLLECTION);
-    const q = sucursal ? query(base, where("sucursal", "==", sucursal)) : base;
+    fetchRef.current = doFetch;
+  }, [doFetch]);
 
-    const unsub = onSnapshot(
-      q,
-      (snap: QuerySnapshot<DocumentData>) => {
-        const rows: Alumno[] = snap.docs
-          .map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              nombre: data.nombre ?? "",
-              telefono: data.telefono ?? "",
-              sucursal: data.sucursal,
-              curso: data.curso,
-              horario: data.horario,
-              fecha: data.fecha ?? "",
-              profeGuiaId: data.profeGuiaId ?? "",
-              instructorId: data.instructorId ?? "",
-              activo: data.activo ?? true,
-            } as Alumno;
-          })
-          .filter((a) => incluirInactivos || a.activo !== false);
-        setAlumnos(rows);
-        setIsLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("useAlumnos onSnapshot:", err);
-        setError("No se pudieron cargar los alumnos en tiempo real.");
-        setIsLoading(false);
-      }
-    );
+  useEffect(() => {
+    setIsLoading(true);
+    void doFetch();
 
-    return () => unsub();
-  }, [sucursal, nonce, incluirInactivos]);
+    const channelName = sucursal
+      ? `alumnos-${sucursal}`
+      : `alumnos-all`;
+    const filter = sucursal ? `sucursal=eq.${sucursal}` : undefined;
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "alumnos",
+          ...(filter ? { filter } : {}),
+        },
+        () => {
+          void fetchRef.current();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sucursal, incluirInactivos, nonce, doFetch]);
 
   const refetch = useCallback(() => setNonce((n) => n + 1), []);
-  const createAlumno = useCallback((data: AlumnoInput) => fsCreateAlumno(data), []);
-  const updateAlumno = useCallback(
-    (id: string, data: Partial<AlumnoInput>) => fsUpdateAlumno(id, data),
+  const createAlumno = useCallback(
+    (data: AlumnoInput) => sbCreateAlumno(data),
     []
   );
-  const deleteAlumno = useCallback((id: string) => fsDeleteAlumno(id), []);
+  const updateAlumno = useCallback(
+    (id: string, data: Partial<AlumnoInput>) => sbUpdateAlumno(id, data),
+    []
+  );
+  const deleteAlumno = useCallback((id: string) => sbDeleteAlumno(id), []);
   const reactivateAlumno = useCallback(
-    (id: string) => fsReactivateAlumno(id),
+    (id: string) => sbReactivateAlumno(id),
     []
   );
   const importMasivo = useCallback(
-    (data: AlumnoInput[]) => fsCreateAlumnosMasivo(data),
+    (data: AlumnoInput[]) => sbCreateAlumnosMasivo(data),
     []
   );
 
