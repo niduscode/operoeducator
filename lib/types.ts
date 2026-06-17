@@ -1,6 +1,6 @@
 // Tipos principales de OperoEducator
 
-export type Sucursal = 'Muermos' | 'Puerto Montt' | 'Osorno' | 'Valdivia' | 'Temuco';
+export type Sucursal = 'Puerto Montt' | 'Osorno' | 'Valdivia' | 'Temuco';
 export type Curso = 'Junior' | 'Senior' | 'Master';
 export type Horario = 'Mañana' | 'Tarde';
 // Alias semántico: en las pantallas de aula usamos "turno" como sinónimo de horario.
@@ -287,6 +287,12 @@ export interface PreciosAlumnos {
   duracionJuniorClases?: number;
   duracionSeniorClases?: number;
   duracionMasterClases?: number;
+  // Inscripción por curso (migración 0007). Se cobra cuando el alumno NO
+  // paga el curso completo de una vez (paga la inscripción para apartar
+  // el cupo y completa después con la mensualidad).
+  inscripcionJunior?: number;
+  inscripcionSenior?: number;
+  inscripcionMaster?: number;
   actualizadoPor: string;     // username de quien actualizó
   actualizadoEn: string;      // ISO datetime
 }
@@ -318,6 +324,8 @@ export interface PagoAlumno {
   // Tipo de pago. Default "Total" en datos legacy. Permite distinguir un
   // abono parcial (cuota) del pago completo del mes.
   tipoPago?: TipoPagoAlumno;
+  // True si este pago incluye la inscripción del curso (migración 0007).
+  pagaInscripcion?: boolean;
   comprobanteUrl?: string;    // URL pública de Firebase Storage (opcional)
   comprobanteNombre?: string; // Nombre original del archivo
   observacion?: string;
@@ -358,7 +366,7 @@ export interface AcademiaData {
   };
 }
 
-export const SUCURSALES: Sucursal[] = ['Muermos', 'Puerto Montt', 'Osorno', 'Valdivia', 'Temuco'];
+export const SUCURSALES: Sucursal[] = ['Puerto Montt', 'Osorno', 'Valdivia', 'Temuco'];
 
 // Dominio interno "fake" usado para construir emails a partir de usernames.
 // Los instructores solo ven/escriben el username; el backend de Firebase

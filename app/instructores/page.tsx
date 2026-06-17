@@ -12,7 +12,9 @@ import SearchableTable, {
   SearchableTableColumn,
 } from "@/components/ui/SearchableTable";
 import { useToast } from "@/components/ui/Toast";
-import InstructorForm from "@/components/instructores/InstructorForm";
+import InstructorForm, {
+  type InstructorCreatePayload,
+} from "@/components/instructores/InstructorForm";
 import { exportarAExcel } from "@/lib/export";
 import { useAuth } from "@/hooks/useAuth";
 import { useInstructores } from "@/hooks/useInstructores";
@@ -39,7 +41,7 @@ type ModalState =
   | { type: "historial"; instructor: Instructor }
   | { type: "deactivate"; instructor: Instructor }
   | { type: "activate"; instructor: Instructor }
-  | { type: "post-create"; email: string };
+  | { type: "post-create"; email: string; password: string };
 
 export default function InstructoresPage() {
   const router = useRouter();
@@ -84,18 +86,32 @@ export default function InstructoresPage() {
     return instructores.filter((i) => i.sucursalActual === filtro);
   }, [instructores, filtro]);
 
-  const handleCreate = async (data: InstructorInput) => {
-    // Pre-check de unicidad: evita perfiles duplicados con el mismo email
-    // (que romperían useMiPerfil al elegir uno arbitrariamente).
-    const existente = await getInstructorPorEmail(data.email);
-    if (existente) {
-      throw new Error(
-        `Ya existe un instructor con ese username (${data.username}). Elige otro.`
-      );
+  const handleCreate = async (
+    data: InstructorInput | InstructorCreatePayload
+  ) => {
+    if (!("password" in data)) {
+      throw new Error("Falta la contraseña inicial.");
     }
-    await createInstructor(data);
-    toast.success("Perfil de instructor creado.");
-    setModal({ type: "post-create", email: data.email });
+    // El API route hace pre-check de unicidad + crea cuenta auth + perfil
+    // + historial inicial. Todo en server-side con service_role.
+    const res = await fetch("/api/admin/instructores", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: data.username,
+        password: data.password,
+        nombreCompleto: data.nombreCompleto,
+        telefono: data.telefono,
+        sucursalActual: data.sucursalActual,
+        fechaIngreso: data.fechaIngreso,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(body?.error ?? "No se pudo crear el instructor.");
+    }
+    toast.success("Instructor creado. Ya puede loguearse.");
+    setModal({ type: "post-create", email: body.email, password: data.password });
   };
 
   const handleMarcarAuth = async (instructor: Instructor) => {
@@ -425,26 +441,12 @@ export default function InstructoresPage() {
       {/* Modal POST-CREATE: instrucciones para crear la cuenta de Auth */}
       {modal.type === "post-create" && canEdit && (
         <Modal
-          title="✅ Perfil creado correctamente"
+          title="✅ Instructor creado y listo para usar"
           onClose={() => setModal({ type: "none" })}
         >
-          <PostCreateInstructions
+          <PostCreateCredentials
             email={modal.email}
-            onMarcarAuthCreado={async () => {
-              // Buscamos el instructor recién creado para marcar el flag.
-              // El onSnapshot de useInstructores ya debería tenerlo en la lista.
-              const recien = instructores.find(
-                (i) => i.email === (modal.type === "post-create" ? modal.email : "")
-              );
-              if (!recien) {
-                toast.info(
-                  "Aún no aparece en la lista; usa el botón de la fila."
-                );
-                return;
-              }
-              await handleMarcarAuth(recien);
-              setModal({ type: "none" });
-            }}
+            password={modal.password}
             onClose={() => setModal({ type: "none" })}
           />
         </Modal>
@@ -768,79 +770,81 @@ function HistorialTimeline({ instructorId }: { instructorId: string }) {
   );
 }
 
-function PostCreateInstructions({
+// Post-create: el instructor ya tiene cuenta auth (la creó la API route).
+// Solo mostramos las credenciales para que el director se las comparta.
+function PostCreateCredentials({
   email,
-  onMarcarAuthCreado,
+  password,
   onClose,
 }: {
   email: string;
-  onMarcarAuthCreado: () => Promise<void>;
+  password: string;
   onClose: () => void;
 }) {
-  const [copiado, setCopiado] = useState(false);
-  const [marcando, setMarcando] = useState(false);
+  const username = email.split("@")[0];
+  const [copiado, setCopiado] = useState<"" | "username" | "password" | "todo">("");
 
-  const copiarEmail = async () => {
+  const copiar = async (texto: string, key: "username" | "password" | "todo") => {
     try {
-      await navigator.clipboard.writeText(email);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2000);
+      await navigator.clipboard.writeText(texto);
+      setCopiado(key);
+      setTimeout(() => setCopiado(""), 2000);
     } catch (e) {
       console.error(e);
     }
   };
 
-  const handleMarcar = async () => {
-    setMarcando(true);
-    try {
-      await onMarcarAuthCreado();
-    } finally {
-      setMarcando(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
-      <div className="p-3 bg-amber-50 text-amber-700 border border-amber-100 rounded-xl text-xs font-bold uppercase tracking-widest">
-        Paso manual pendiente
+      <div className="p-3 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-xs font-bold uppercase tracking-widest">
+        Listo — el instructor ya puede iniciar sesión
       </div>
-      <ol className="text-sm text-slate-700 space-y-2 list-decimal list-inside">
-        <li>
-          Abre <b>Firebase Console → Authentication → Users → Add user</b>.
-        </li>
-        <li>
-          Pega el email del nuevo instructor:
-          <div className="mt-1 p-2 bg-slate-100 rounded-xl font-mono text-xs break-all">
-            {email}
-          </div>
-        </li>
-        <li>Asigna una contraseña temporal segura.</li>
-        <li>
-          Comparte el username (parte antes del <code>@</code>) y la contraseña
-          con el instructor por un canal privado.
-        </li>
-        <li>
-          Cuando termines, <b>marca aquí</b> que la cuenta de Auth ya fue
-          creada para que desaparezca el badge ⚠️ "Auth pendiente".
-        </li>
-      </ol>
 
-      <div className="flex flex-wrap gap-2 justify-end pt-2">
-        <Button variant="outline" onClick={copiarEmail}>
-          {copiado ? "Copiado ✓" : "Copiar email"}
-        </Button>
-        <a
-          href="https://console.firebase.google.com/project/_/authentication/users"
-          target="_blank"
-          rel="noopener noreferrer"
+      <div className="space-y-2">
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+            Usuario
+          </p>
+          <div className="flex gap-2">
+            <div className="flex-1 p-2 bg-slate-100 rounded-xl font-mono text-sm break-all">
+              {username}
+            </div>
+            <Button variant="outline" onClick={() => copiar(username, "username")}>
+              {copiado === "username" ? "✓" : "Copiar"}
+            </Button>
+          </div>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+            Contraseña inicial
+          </p>
+          <div className="flex gap-2">
+            <div className="flex-1 p-2 bg-slate-100 rounded-xl font-mono text-sm break-all">
+              {password}
+            </div>
+            <Button variant="outline" onClick={() => copiar(password, "password")}>
+              {copiado === "password" ? "✓" : "Copiar"}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-xs text-slate-500">
+        Compártele estas credenciales al instructor por un canal privado
+        (WhatsApp directo, no grupo). El instructor entra a{" "}
+        <b>operoeducator.vercel.app</b>, escribe su usuario y contraseña,
+        y puede cambiarla desde su perfil.
+      </p>
+
+      <div className="flex justify-end gap-2 pt-2">
+        <Button
+          variant="outline"
+          onClick={() => copiar(`Usuario: ${username}\nContraseña: ${password}`, "todo")}
         >
-          <Button variant="outline">Abrir Firebase Console</Button>
-        </a>
-        <Button variant="primary" onClick={handleMarcar} disabled={marcando}>
-          {marcando ? "Marcando..." : "Marcar Auth como creado"}
+          {copiado === "todo" ? "Copiado ✓" : "Copiar ambos"}
         </Button>
-        <Button variant="ghost" onClick={onClose}>
-          Cerrar
+        <Button variant="primary" onClick={onClose}>
+          Listo
         </Button>
       </div>
     </div>

@@ -113,7 +113,6 @@ const NOMBRES_PROFES_GUIAS = [
 ];
 
 const NOMBRES_INSTRUCTORES_FICTICIOS: Record<Sucursal, { username: string; nombre: string }> = {
-  Muermos: { username: "instructor.test.muermos", nombre: "Camilo Bahamondes" },
   "Puerto Montt": { username: "instructor.test.puertomontt", nombre: "Daniela Oyarzún" },
   Osorno: { username: "instructor.test.osorno", nombre: "Rodrigo Pailalef" },
   Valdivia: { username: "instructor.test.valdivia", nombre: "Francisca Schneider" },

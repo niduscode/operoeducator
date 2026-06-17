@@ -259,7 +259,17 @@ export function filtrarAsistenciasParaProfe(
   return out;
 }
 
-// Cálculo NUEVO escalado para instructor: 1er alumno + N-1 adicionales por día.
+// Cálculo NUEVO escalado para instructor: 1er alumno + N-1 adicionales POR CURSO.
+//
+// Modelo (migración 0008):
+//   - Hay 3 pares (primero, adicional) — uno por curso (Junior/Senior/Master).
+//   - Para cada día, agrupamos los alumnos atendidos por curso. Si el
+//     instructor atendió p.ej. 2 Junior + 1 Senior, el día se cobra como
+//     (primer_J + 1*adic_J) + (primer_S + 0).
+//   - Días sin asistencias pagables no cuentan.
+//
+// `montosPorCurso` reemplaza al viejo par único (montoPrimerAlumno,
+// montoAlumnoAdicional). Lo recibe del config_pagos via useConfigPagos.
 let __warnedLegacyInstructorSnap = false;
 export function construirPagoCalculadoInstructorEscalado(args: {
   instructorId: string;
@@ -269,12 +279,11 @@ export function construirPagoCalculadoInstructorEscalado(args: {
   año: number;
   asistencias: AsistenciaAlumno[];
   alumnosDeEsteInstructor: Set<string>;
-  montoPrimerAlumno: number;
-  montoAlumnoAdicional: number;
+  montosPorCurso: import("./database.types").MontosEscaladosPorCurso;
 }): PagoCalculado {
   const {
     instructorId, instructorNombre, sucursal, mes, año, asistencias,
-    alumnosDeEsteInstructor, montoPrimerAlumno, montoAlumnoAdicional,
+    alumnosDeEsteInstructor, montosPorCurso,
   } = args;
 
   const propias: AsistenciaAlumno[] = [];
@@ -292,32 +301,48 @@ export function construirPagoCalculadoInstructorEscalado(args: {
     }
   }
 
-  const porDia = new Map<string, Set<string>>();
+  // fecha → curso → Set<alumnoId>
+  const porDiaCurso = new Map<string, Map<Curso, Set<string>>>();
   const porCurso: Record<Curso, number> = { Junior: 0, Senior: 0, Master: 0 };
 
   for (const a of propias) {
-    const setDia = porDia.get(a.fecha) ?? new Set<string>();
-    if (!setDia.has(a.alumnoId)) {
-      setDia.add(a.alumnoId);
-      if (a.curso && CURSOS.includes(a.curso)) porCurso[a.curso] += 1;
+    if (!a.curso || !CURSOS.includes(a.curso)) continue;
+    let mapDia = porDiaCurso.get(a.fecha);
+    if (!mapDia) {
+      mapDia = new Map();
+      porDiaCurso.set(a.fecha, mapDia);
     }
-    porDia.set(a.fecha, setDia);
+    let setCurso = mapDia.get(a.curso);
+    if (!setCurso) {
+      setCurso = new Set();
+      mapDia.set(a.curso, setCurso);
+    }
+    if (!setCurso.has(a.alumnoId)) {
+      setCurso.add(a.alumnoId);
+      porCurso[a.curso] += 1;
+    }
   }
 
-  const desgloseDias = Array.from(porDia.entries())
-    .map(([fecha, set]) => {
-      const alumnos = set.size;
-      const total =
-        alumnos > 0
-          ? montoPrimerAlumno + Math.max(0, alumnos - 1) * montoAlumnoAdicional
-          : 0;
-      return {
-        fecha,
-        alumnos,
-        montoPrimero: alumnos > 0 ? montoPrimerAlumno : 0,
-        montoAdicional: montoAlumnoAdicional,
-        total,
-      };
+  const desgloseDias = Array.from(porDiaCurso.entries())
+    .map(([fecha, mapCurso]) => {
+      let total = 0;
+      let alumnosDia = 0;
+      let montoPrimero = 0;
+      let montoAdicional = 0;
+      for (const [curso, set] of mapCurso) {
+        const n = set.size;
+        if (n === 0) continue;
+        const cfg = montosPorCurso[curso];
+        const subtotalCurso = cfg.primero + Math.max(0, n - 1) * cfg.adicional;
+        total += subtotalCurso;
+        alumnosDia += n;
+        // Para el desglose UI guardamos los del PRIMER curso encontrado.
+        // No es perfecto cuando hay multi-curso, pero la UI sólo lo usa
+        // como referencia visual.
+        if (montoPrimero === 0) montoPrimero = cfg.primero;
+        if (montoAdicional === 0) montoAdicional = cfg.adicional;
+      }
+      return { fecha, alumnos: alumnosDia, montoPrimero, montoAdicional, total };
     })
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
@@ -340,7 +365,7 @@ export function construirPagoCalculadoInstructorEscalado(args: {
     año,
     detallePorCurso,
     totalCLP,
-    diasTrabajados: porDia.size,
+    diasTrabajados: porDiaCurso.size,
     alumnosAsistidos,
     diasDetalle,
     desgloseDias,
@@ -434,36 +459,48 @@ export async function actualizarPdfSemana(args: {
 }
 
 // Cálculo agregado de recaudación del mes. Reusa la lógica de estado
-// de morosidad.
+// de morosidad. Tolerante a errores: si algo falla, devuelve ceros en
+// vez de tirar — esta función la consume el dashboard /pagos en un
+// useEffect y queremos que NO crashee la página entera.
 export async function calcularRecaudacionAlumnos(
   mes: number,
   año: number
 ): Promise<{ totalCLP: number; alumnosAlDia: number; alumnosConDeuda: number }> {
-  const [pagos, alumnos, precios] = await Promise.all([
-    getPagosDelMes(año, mes),
-    supabase.from("alumnos").select("*").eq("activo", true).then((r) => r.data ?? []),
-    getPreciosAlumnos().catch(() => null as PreciosAlumnos | null),
-  ]);
+  try {
+    const pagos = await getPagosDelMes(año, mes).catch(() => [] as PagoAlumno[]);
 
-  const totalCLP = pagos.reduce((acc, p) => acc + (p.monto || 0), 0);
-  const pagadoPorAlumno = new Map<string, number>();
-  for (const p of pagos) {
-    pagadoPorAlumno.set(p.alumnoId, (pagadoPorAlumno.get(p.alumnoId) ?? 0) + (p.monto || 0));
-  }
-  let alDia = 0;
-  let conDeuda = 0;
-  for (const a of alumnos as { id: string; curso: Curso }[]) {
-    const precio = precios ? precios[a.curso] ?? 0 : 0;
-    const pagado = pagadoPorAlumno.get(a.id) ?? 0;
-    if (precio > 0) {
-      if (pagado >= precio) alDia++;
-      else conDeuda++;
-    } else {
-      if (pagado > 0) alDia++;
-      else conDeuda++;
+    // Alumnos activos: query directa via service-side typed correctamente.
+    const alumnosRes = await supabase
+      .from("alumnos")
+      .select("id, curso")
+      .eq("activo", true);
+    const alumnos = (alumnosRes.data ?? []) as { id: string; curso: Curso }[];
+
+    const precios = await getPreciosAlumnos().catch(() => null as PreciosAlumnos | null);
+
+    const totalCLP = pagos.reduce((acc, p) => acc + (p.monto || 0), 0);
+    const pagadoPorAlumno = new Map<string, number>();
+    for (const p of pagos) {
+      pagadoPorAlumno.set(p.alumnoId, (pagadoPorAlumno.get(p.alumnoId) ?? 0) + (p.monto || 0));
     }
+    let alDia = 0;
+    let conDeuda = 0;
+    for (const a of alumnos) {
+      const precio = precios ? precios[a.curso] ?? 0 : 0;
+      const pagado = pagadoPorAlumno.get(a.id) ?? 0;
+      if (precio > 0) {
+        if (pagado >= precio) alDia++;
+        else conDeuda++;
+      } else {
+        if (pagado > 0) alDia++;
+        else conDeuda++;
+      }
+    }
+    return { totalCLP, alumnosAlDia: alDia, alumnosConDeuda: conDeuda };
+  } catch (err) {
+    console.error("calcularRecaudacionAlumnos:", err);
+    return { totalCLP: 0, alumnosAlDia: 0, alumnosConDeuda: 0 };
   }
-  return { totalCLP, alumnosAlDia: alDia, alumnosConDeuda: conDeuda };
 }
 
 // Cálculo de fecha de término de un curso (puro, no toca BD).

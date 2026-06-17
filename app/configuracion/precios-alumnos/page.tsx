@@ -45,6 +45,7 @@ export default function PreciosAlumnosPage() {
   );
 
   const [valores, setValores] = useState(PRECIOS_VACIOS);
+  const [inscripciones, setInscripciones] = useState(PRECIOS_VACIOS);
   const [duraciones, setDuraciones] = useState(DURACION_VACIA);
   const [hidratado, setHidratado] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -57,6 +58,11 @@ export default function PreciosAlumnosPage() {
         Junior: precios.Junior,
         Senior: precios.Senior,
         Master: precios.Master,
+      });
+      setInscripciones({
+        Junior: precios.inscripcionJunior ?? 0,
+        Senior: precios.inscripcionSenior ?? 0,
+        Master: precios.inscripcionMaster ?? 0,
       });
       setDuraciones({
         Junior: precios.duracionJuniorClases ?? DURACION_DEFAULT_CLASES.Junior,
@@ -75,6 +81,14 @@ export default function PreciosAlumnosPage() {
   const onChange = (curso: keyof typeof PRECIOS_VACIOS, valor: string) => {
     const n = Number(valor);
     setValores((v) => ({
+      ...v,
+      [curso]: Number.isFinite(n) && n >= 0 ? n : 0,
+    }));
+  };
+
+  const onChangeInscripcion = (curso: keyof typeof PRECIOS_VACIOS, valor: string) => {
+    const n = Number(valor);
+    setInscripciones((v) => ({
       ...v,
       [curso]: Number.isFinite(n) && n >= 0 ? n : 0,
     }));
@@ -100,10 +114,13 @@ export default function PreciosAlumnosPage() {
           duracionJuniorClases: duraciones.Junior || undefined,
           duracionSeniorClases: duraciones.Senior || undefined,
           duracionMasterClases: duraciones.Master || undefined,
+          inscripcionJunior: inscripciones.Junior,
+          inscripcionSenior: inscripciones.Senior,
+          inscripcionMaster: inscripciones.Master,
         },
         directorUsername || "director"
       );
-      showToast("Precios y duraciones guardados.");
+      showToast("Precios, inscripciones y duraciones guardados.");
     } catch (err) {
       console.error("guardar precios:", err);
       showToast(
@@ -175,6 +192,43 @@ export default function PreciosAlumnosPage() {
                 <div key={c} className="flex justify-between text-xs">
                   <span className="text-slate-500">{c}</span>
                   <b className="text-slate-900">{formatCLP(valores[c] ?? 0)}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <Card
+          title="Inscripción por curso"
+          subtitle="CLP — se cobra cuando el alumno NO paga el curso completo"
+        >
+          <p className="text-xs text-slate-500 mb-3">
+            Si el alumno paga el curso completo de una vez, NO paga inscripción.
+            Si paga en partes, debe pagar la inscripción primero para apartar el
+            cupo, y completar con la mensualidad después.
+          </p>
+          <div className="space-y-2">
+            {CURSOS.map((c) => (
+              <Input
+                key={c}
+                label={c}
+                type="number"
+                step="500"
+                value={String(inscripciones[c] ?? 0)}
+                onChange={(e) => onChangeInscripcion(c, e.target.value)}
+                disabled={submitting}
+              />
+            ))}
+            <div className="mt-2 p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">
+                Vista previa
+              </p>
+              {CURSOS.map((c) => (
+                <div key={c} className="flex justify-between text-xs">
+                  <span className="text-slate-500">{c}</span>
+                  <b className="text-slate-900">
+                    {formatCLP(inscripciones[c] ?? 0)}
+                  </b>
                 </div>
               ))}
             </div>

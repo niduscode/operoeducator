@@ -39,9 +39,15 @@ export default function ConfigPagosPage() {
     [userEmail]
   );
 
-  // Modelo NUEVO: dos montos globales para todos los instructores.
-  const [montoPrimero, setMontoPrimero] = useState<number>(0);
-  const [montoAdicional, setMontoAdicional] = useState<number>(0);
+  // Modelo NUEVO por curso: 3 pares (primero, adicional) — uno por curso.
+  type Par = { primero: number; adicional: number };
+  type MontosCurso = { Junior: Par; Senior: Par; Master: Par };
+  const MONTOS_VACIOS: MontosCurso = {
+    Junior: { primero: 0, adicional: 0 },
+    Senior: { primero: 0, adicional: 0 },
+    Master: { primero: 0, adicional: 0 },
+  };
+  const [montosInstructor, setMontosInstructor] = useState<MontosCurso>(MONTOS_VACIOS);
   // Modelo legacy de profes guías (sigue activo).
   const [tarifasProfeGuia, setTarifasProfeGuia] =
     useState<TarifasPorCurso>(TARIFAS_VACIAS);
@@ -53,8 +59,7 @@ export default function ConfigPagosPage() {
     if (configLoading) return;
     if (hidratado) return;
     if (config) {
-      setMontoPrimero(config.montoInstructorPrimerAlumno ?? 0);
-      setMontoAdicional(config.montoInstructorAlumnoAdicional ?? 0);
+      setMontosInstructor(config.montosInstructor ?? MONTOS_VACIOS);
       setTarifasProfeGuia(config.tarifasProfeGuia);
     }
     setHidratado(true);
@@ -70,12 +75,9 @@ export default function ConfigPagosPage() {
     try {
       await save(
         {
-          // Mantener tarifasInstructor por compatibilidad con docs viejos:
-          // copiamos lo que ya estaba en Firestore para no pisar a 0.
           tarifasInstructor: config?.tarifasInstructor ?? TARIFAS_VACIAS,
           tarifasProfeGuia,
-          montoInstructorPrimerAlumno: montoPrimero,
-          montoInstructorAlumnoAdicional: montoAdicional,
+          montosInstructor,
         },
         directorUsername || "director"
       );
@@ -102,11 +104,17 @@ export default function ConfigPagosPage() {
     ? formatearFecha(config.actualizadoEn)
     : null;
 
-  // Ejemplo: 1 alumno, 2, 3, 5, 8.
-  const ejemplos = [1, 2, 3, 5, 8].map((n) => ({
-    n,
-    total: n > 0 ? montoPrimero + (n - 1) * montoAdicional : 0,
-  }));
+  // Ejemplos por curso: 1, 2, 3, 5, 8 alumnos en un día.
+  const ejemplosPorCurso = CURSOS.map((c) => {
+    const par = montosInstructor[c];
+    return {
+      curso: c,
+      filas: [1, 2, 3, 5, 8].map((n) => ({
+        n,
+        total: n > 0 ? par.primero + (n - 1) * par.adicional : 0,
+      })),
+    };
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
@@ -139,56 +147,78 @@ export default function ConfigPagosPage() {
 
         <Card
           title="Pago a Instructores"
-          subtitle="Modelo escalado: por día, según cuántos alumnos asistieron"
+          subtitle="Modelo escalado POR CURSO: 1er alumno + N-1 adicionales en el día"
         >
-          <div className="space-y-3 mt-4">
-            <Input
-              label="Monto por primer alumno asistido (CLP)"
-              type="number"
-              step="100"
-              value={String(montoPrimero)}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                setMontoPrimero(Number.isFinite(n) && n >= 0 ? n : 0);
-              }}
-              disabled={submitting}
-            />
-            <Input
-              label="Monto por alumno adicional asistido (CLP)"
-              type="number"
-              step="100"
-              value={String(montoAdicional)}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                setMontoAdicional(Number.isFinite(n) && n >= 0 ? n : 0);
-              }}
-              disabled={submitting}
-            />
-
-            <div className="mt-2 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
-                Vista previa por día
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                {ejemplos.map((e) => (
-                  <div
-                    key={e.n}
-                    className="bg-white px-3 py-2 rounded-xl border border-slate-200 text-center"
-                  >
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      {e.n} alumno{e.n === 1 ? "" : "s"}
-                    </p>
-                    <b className="text-sm text-slate-900 block mt-1">
-                      {formatCLP(e.total)}
-                    </b>
+          <p className="text-xs text-slate-500 mb-4 mt-2">
+            Cada curso tiene su propio par (primer alumno, adicional). Si en
+            un mismo día el instructor atiende alumnos de varios cursos, el
+            pago del día se suma por curso de forma independiente.
+          </p>
+          <div className="space-y-6 mt-4">
+            {CURSOS.map((c) => (
+              <div
+                key={c}
+                className="p-4 border border-slate-200 rounded-2xl bg-white space-y-3"
+              >
+                <h3 className="text-sm font-bold text-slate-900">{c}</h3>
+                <Input
+                  label="Monto por primer alumno (CLP)"
+                  type="number"
+                  step="100"
+                  value={String(montosInstructor[c].primero)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    setMontosInstructor((m) => ({
+                      ...m,
+                      [c]: {
+                        ...m[c],
+                        primero: Number.isFinite(n) && n >= 0 ? n : 0,
+                      },
+                    }));
+                  }}
+                  disabled={submitting}
+                />
+                <Input
+                  label="Monto por alumno adicional (CLP)"
+                  type="number"
+                  step="100"
+                  value={String(montosInstructor[c].adicional)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    setMontosInstructor((m) => ({
+                      ...m,
+                      [c]: {
+                        ...m[c],
+                        adicional: Number.isFinite(n) && n >= 0 ? n : 0,
+                      },
+                    }));
+                  }}
+                  disabled={submitting}
+                />
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+                    Vista previa día — {c}
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    {ejemplosPorCurso
+                      .find((x) => x.curso === c)!
+                      .filas.map((e) => (
+                        <div
+                          key={e.n}
+                          className="bg-white px-3 py-2 rounded-xl border border-slate-200 text-center"
+                        >
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                            {e.n} alumno{e.n === 1 ? "" : "s"}
+                          </p>
+                          <b className="text-sm text-slate-900 block mt-1">
+                            {formatCLP(e.total)}
+                          </b>
+                        </div>
+                      ))}
                   </div>
-                ))}
+                </div>
               </div>
-              <p className="text-[11px] text-slate-500 mt-2">
-                Fórmula: <b>1er alumno</b> + <b>(N − 1) × adicional</b>. Aplica
-                a todas las sucursales.
-              </p>
-            </div>
+            ))}
           </div>
         </Card>
 

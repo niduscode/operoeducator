@@ -661,7 +661,6 @@ function VistaPorSucursal({
 
   const porSucursal = useMemo(() => {
     const map: Record<Sucursal, Alumno[]> = {
-      Muermos: [],
       "Puerto Montt": [],
       Osorno: [],
       Valdivia: [],

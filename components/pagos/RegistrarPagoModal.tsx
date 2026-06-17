@@ -93,6 +93,12 @@ export default function RegistrarPagoModal({
   const [tipoPago, setTipoPago] = useState<TipoPagoAlumno>(
     initialPago?.tipoPago ?? "Total"
   );
+  // Si el alumno paga el curso completo, normalmente NO paga inscripción.
+  // Si es parcial, DEBE pagar la inscripción primero para apartar el cupo.
+  // El director puede sobrescribirlo a mano si hay una excepción.
+  const [pagaInscripcion, setPagaInscripcion] = useState<boolean>(
+    initialPago?.pagaInscripcion ?? false
+  );
   const [observacion, setObservacion] = useState(
     initialPago?.observacion ?? ""
   );
@@ -319,6 +325,7 @@ export default function RegistrarPagoModal({
         fechaPago,
         medioPago,
         tipoPago,
+        pagaInscripcion,
         comprobanteUrl,
         comprobanteNombre,
         observacion: observacion.trim() || undefined,
@@ -445,6 +452,50 @@ export default function RegistrarPagoModal({
           disabled={submitting}
         />
       </div>
+
+      {/* Checkbox inscripción. Solo se ofrece cuando el pago es parcial
+          (el alumno aparta el cupo) o el director quiere marcarlo manual.
+          Para pago Total, el alumno NO paga inscripción por regla de negocio. */}
+      <label
+        className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition-all ${
+          pagaInscripcion
+            ? "border-brand-300 bg-brand-50"
+            : "border-slate-200 bg-white hover:bg-slate-50"
+        }`}
+      >
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4"
+          checked={pagaInscripcion}
+          onChange={(e) => setPagaInscripcion(e.target.checked)}
+          disabled={submitting}
+        />
+        <div className="text-xs">
+          <p className="font-bold text-slate-900">Incluye inscripción</p>
+          <p className="text-slate-500 mt-0.5">
+            Marca esto si este pago incluye también el monto de inscripción
+            del curso (se cobra solo cuando el alumno NO paga el curso
+            completo de una vez).
+            {alumnoSeleccionado && precios && (
+              <>
+                {" "}
+                <span className="text-slate-700">
+                  Inscripción {alumnoSeleccionado.curso}:{" "}
+                  <b>
+                    {formatCLP(
+                      alumnoSeleccionado.curso === "Junior"
+                        ? precios.inscripcionJunior ?? 0
+                        : alumnoSeleccionado.curso === "Senior"
+                          ? precios.inscripcionSenior ?? 0
+                          : precios.inscripcionMaster ?? 0
+                    )}
+                  </b>
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+      </label>
 
       {tipoPago !== "Total" && precioReferencia > 0 && (
         <div className="p-3 bg-amber-50 border border-amber-100 rounded-2xl text-xs text-amber-800">

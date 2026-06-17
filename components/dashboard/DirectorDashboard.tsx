@@ -29,7 +29,6 @@ export default function DirectorDashboard() {
 
   const instructoresPorSucursal = useMemo(() => {
     const map: Record<Sucursal, Instructor[]> = {
-      Muermos: [],
       "Puerto Montt": [],
       Osorno: [],
       Valdivia: [],

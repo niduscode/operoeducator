@@ -9,7 +9,7 @@
 // para regenerarlo automáticamente, pero por ahora mantenemos manual
 // para no obligar a `supabase login` en CI.
 
-export type Sucursal = "Muermos" | "Puerto Montt" | "Osorno" | "Valdivia" | "Temuco";
+export type Sucursal = "Puerto Montt" | "Osorno" | "Valdivia" | "Temuco";
 export type Curso = "Junior" | "Senior" | "Master";
 export type Horario = "Mañana" | "Tarde";
 export type EstadoAsistencia = "Presente" | "Tarde" | "Ausente";
@@ -118,8 +118,14 @@ export interface EvaluacionAlumnoRow {
 
 export interface ConfigPagosRow {
   id: "default";
-  monto_instructor_primer_alumno: number;
-  monto_instructor_alumno_adicional: number;
+  // Modelo escalado por curso (migración 0008).
+  monto_instructor_primer_alumno_junior: number;
+  monto_instructor_alumno_adicional_junior: number;
+  monto_instructor_primer_alumno_senior: number;
+  monto_instructor_alumno_adicional_senior: number;
+  monto_instructor_primer_alumno_master: number;
+  monto_instructor_alumno_adicional_master: number;
+  // Tarifas planas por curso (legacy fallback + tarifas vigentes para profes guías).
   tarifa_instructor_junior: number;
   tarifa_instructor_senior: number;
   tarifa_instructor_master: number;
@@ -140,6 +146,11 @@ export interface PreciosAlumnosRow {
   duracion_junior_clases: number;
   duracion_senior_clases: number;
   duracion_master_clases: number;
+  // Inscripción por curso (migración 0007). Se cobra como apartado del cupo
+  // cuando el alumno no paga el curso completo de una vez.
+  inscripcion_junior: number;
+  inscripcion_senior: number;
+  inscripcion_master: number;
   actualizado_por: string;
   actualizado_en: string;
   created_at: string;
@@ -158,6 +169,9 @@ export interface PagoAlumnoRow {
   fecha_pago: string;
   medio_pago: MedioPagoAlumno;
   tipo_pago: TipoPagoAlumno;
+  // True si este pago incluye la inscripción del cupo (migración 0007).
+  // El monto total = inscripción + abono mensualidad.
+  paga_inscripcion: boolean;
   comprobante_url: string | null;
   comprobante_nombre: string | null;
   observacion: string | null;
@@ -306,10 +320,18 @@ export interface TarifasPorCurso {
   Master: number;
 }
 
+// Pares (1° + adicional) escalados por curso para instructor.
+export interface MontosEscaladosPorCurso {
+  Junior: { primero: number; adicional: number };
+  Senior: { primero: number; adicional: number };
+  Master: { primero: number; adicional: number };
+}
+
 export interface ConfigPagos {
   id: "default";
-  montoInstructorPrimerAlumno: number;
-  montoInstructorAlumnoAdicional: number;
+  // Modelo escalado POR CURSO (migración 0008).
+  montosInstructor: MontosEscaladosPorCurso;
+  // Tarifas planas por curso (legacy + profe guía).
   tarifasInstructor: TarifasPorCurso;
   tarifasProfeGuia: TarifasPorCurso;
   actualizadoPor: string;
@@ -324,6 +346,10 @@ export interface PreciosAlumnos {
   duracionJuniorClases: number;
   duracionSeniorClases: number;
   duracionMasterClases: number;
+  // Inscripción por curso (migración 0007).
+  inscripcionJunior: number;
+  inscripcionSenior: number;
+  inscripcionMaster: number;
   actualizadoPor: string;
   actualizadoEn: string;
 }
@@ -340,6 +366,8 @@ export interface PagoAlumno {
   fechaPago: string;
   medioPago: MedioPagoAlumno;
   tipoPago: TipoPagoAlumno;
+  // True si incluye el monto de inscripción. Default false (sólo mensualidad).
+  pagaInscripcion: boolean;
   comprobanteUrl?: string;
   comprobanteNombre?: string;
   observacion?: string;

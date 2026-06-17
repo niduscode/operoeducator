@@ -203,8 +203,12 @@ export function useMiPago(mes: number, año: number): UseMiPagoReturn {
 
   const pago = useMemo<PagoCalculado | null>(() => {
     if (!perfil) return null;
-    const montoPrimero = config?.montoInstructorPrimerAlumno ?? 0;
-    const montoAdicional = config?.montoInstructorAlumnoAdicional ?? 0;
+    const MONTOS_VACIOS = {
+      Junior: { primero: 0, adicional: 0 },
+      Senior: { primero: 0, adicional: 0 },
+      Master: { primero: 0, adicional: 0 },
+    };
+    const montosPorCurso = config?.montosInstructor ?? MONTOS_VACIOS;
     const setIds = new Set(alumnosAsignados.map((a) => a.id));
     return construirPagoCalculadoInstructorEscalado({
       instructorId: perfil.id,
@@ -214,8 +218,7 @@ export function useMiPago(mes: number, año: number): UseMiPagoReturn {
       año,
       asistencias,
       alumnosDeEsteInstructor: setIds,
-      montoPrimerAlumno: montoPrimero,
-      montoAlumnoAdicional: montoAdicional,
+      montosPorCurso,
     });
   }, [perfil, config, asistencias, alumnosAsignados, mes, año]);
 

@@ -137,8 +137,12 @@ export function usePagosInstructores(
   }, [refetchAsistencias, nonce]);
 
   const pagos = useMemo<PagoCalculado[]>(() => {
-    const montoPrimero = config?.montoInstructorPrimerAlumno ?? 0;
-    const montoAdicional = config?.montoInstructorAlumnoAdicional ?? 0;
+    const MONTOS_VACIOS = {
+      Junior: { primero: 0, adicional: 0 },
+      Senior: { primero: 0, adicional: 0 },
+      Master: { primero: 0, adicional: 0 },
+    };
+    const montosPorCurso = config?.montosInstructor ?? MONTOS_VACIOS;
 
     // Pre-índice de alumnos por instructorId (fallback legacy).
     const porInst = new Map<string, Set<string>>();
@@ -162,8 +166,7 @@ export function usePagosInstructores(
             (a) => a.registradaPor === i.username
           ),
           alumnosDeEsteInstructor: porInst.get(i.id) ?? new Set<string>(),
-          montoPrimerAlumno: montoPrimero,
-          montoAlumnoAdicional: montoAdicional,
+          montosPorCurso,
         })
       )
       .sort((a, b) => b.totalCLP - a.totalCLP);

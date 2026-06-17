@@ -18,12 +18,17 @@ import {
 } from "@/lib/firestore";
 import { useAlumnos } from "@/hooks/useAlumnos";
 
+// En CREATE, además de los datos del perfil, se incluye la contraseña
+// inicial que el director define. El parent llama al API route que crea
+// la cuenta auth + el perfil en Supabase de una sola pasada.
+export type InstructorCreatePayload = InstructorInput & { password: string };
+
 interface InstructorFormProps {
   initial?: Instructor | null;
   // username del director que está creando/editando — se persiste en creadoPor
   // (solo en create) o se ignora en edit. Llega desde la página vía useAuth.
   currentDirectorUsername: string;
-  onSubmit: (data: InstructorInput) => Promise<void>;
+  onSubmit: (data: InstructorInput | InstructorCreatePayload) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -53,6 +58,10 @@ export default function InstructorForm({
   );
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  // Solo en CREATE: contraseña inicial del instructor. La cambia él mismo
+  // después con un flujo aparte (o desde el dashboard de Supabase Auth).
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const isEdit = Boolean(initial);
 
@@ -124,10 +133,18 @@ export default function InstructorForm({
       );
       return;
     }
+    if (!isEdit) {
+      // En CREATE la contraseña inicial es obligatoria — el API la usa
+      // para crear la cuenta en Supabase Auth en una sola pasada.
+      if (password.length < 6) {
+        setFormError("La contraseña inicial debe tener al menos 6 caracteres.");
+        return;
+      }
+    }
 
     setSubmitting(true);
     try {
-      await onSubmit({
+      const base: InstructorInput = {
         nombreCompleto: nombreLimpio,
         username: usernameLimpio,
         email: usernameToEmail(usernameLimpio),
@@ -135,15 +152,14 @@ export default function InstructorForm({
         sucursalActual,
         activo,
         fechaIngreso,
-        // fechaCreacion ya NO se setea client-side: lo maneja Postgres via
-        // created_at NOT NULL DEFAULT now() (ver schema 0002). Mantenemos
-        // la columna en el type como derived field de created_at.
         userId: initial?.userId ?? null,
         creadoPor: initial?.creadoPor ?? currentDirectorUsername,
-        // En create siempre arranca en false (el director marca a mano cuando
-        // crea la cuenta de Auth). En edit preservamos lo que ya estaba.
-        authVerificado: initial?.authVerificado ?? false,
-      });
+        // En CREATE el API crea la cuenta auth automáticamente → marcar true.
+        // En EDIT preservamos lo que estaba.
+        authVerificado: initial?.authVerificado ?? true,
+      };
+      const payload = isEdit ? base : { ...base, password };
+      await onSubmit(payload);
       // Después de actualizar el perfil, sincronizamos las asignaciones.
       // Sólo aplica en edit (necesitamos el id existente).
       if (isEdit && initial) {
@@ -235,6 +251,36 @@ export default function InstructorForm({
         onChange={(e) => setFechaIngreso(e.target.value)}
         disabled={submitting}
       />
+
+      {/* Contraseña inicial — solo en create. La cuenta auth se crea
+          automáticamente vía el API route admin. El instructor entra con
+          su username + esta contraseña y la puede cambiar después. */}
+      {!isEdit && (
+        <div>
+          <div className="relative">
+            <Input
+              label="Contraseña inicial (mín 6 caracteres)"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="ej: Bienvenido2026!"
+              required
+              disabled={submitting}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-9 text-[10px] uppercase tracking-widest text-slate-400 hover:text-slate-700"
+            >
+              {showPassword ? "Ocultar" : "Ver"}
+            </button>
+          </div>
+          <p className="-mt-2 mb-3 text-[11px] text-slate-500">
+            Cárgale esta contraseña al instructor por un canal privado.
+            Él la cambia después desde su sesión.
+          </p>
+        </div>
+      )}
 
       <div className="mb-4">
         <label className="flex items-center gap-2 cursor-pointer select-none">

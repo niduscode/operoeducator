@@ -248,8 +248,20 @@ function fromEvaluacionInput(
 function toConfigPagos(r: ConfigPagosRow): ConfigPagos {
   return {
     id: "default",
-    montoInstructorPrimerAlumno: r.monto_instructor_primer_alumno,
-    montoInstructorAlumnoAdicional: r.monto_instructor_alumno_adicional,
+    montosInstructor: {
+      Junior: {
+        primero: r.monto_instructor_primer_alumno_junior,
+        adicional: r.monto_instructor_alumno_adicional_junior,
+      },
+      Senior: {
+        primero: r.monto_instructor_primer_alumno_senior,
+        adicional: r.monto_instructor_alumno_adicional_senior,
+      },
+      Master: {
+        primero: r.monto_instructor_primer_alumno_master,
+        adicional: r.monto_instructor_alumno_adicional_master,
+      },
+    },
     tarifasInstructor: {
       Junior: r.tarifa_instructor_junior,
       Senior: r.tarifa_instructor_senior,
@@ -274,6 +286,9 @@ function toPrecios(r: PreciosAlumnosRow): PreciosAlumnos {
     duracionJuniorClases: r.duracion_junior_clases,
     duracionSeniorClases: r.duracion_senior_clases,
     duracionMasterClases: r.duracion_master_clases,
+    inscripcionJunior: r.inscripcion_junior,
+    inscripcionSenior: r.inscripcion_senior,
+    inscripcionMaster: r.inscripcion_master,
     actualizadoPor: r.actualizado_por,
     actualizadoEn: r.actualizado_en,
   };
@@ -292,6 +307,7 @@ function toPagoAlumno(r: PagoAlumnoRow): PagoAlumno {
     fechaPago: r.fecha_pago,
     medioPago: r.medio_pago,
     tipoPago: r.tipo_pago,
+    pagaInscripcion: r.paga_inscripcion ?? false,
     comprobanteUrl: nz(r.comprobante_url),
     comprobanteNombre: nz(r.comprobante_nombre),
     observacion: nz(r.observacion),
@@ -314,6 +330,7 @@ function fromPagoAlumnoInput(
     fecha_pago: p.fechaPago,
     medio_pago: p.medioPago,
     tipo_pago: p.tipoPago,
+    paga_inscripcion: p.pagaInscripcion ?? false,
     comprobante_url: p.comprobanteUrl ?? null,
     comprobante_nombre: p.comprobanteNombre ?? null,
     observacion: p.observacion ?? null,
@@ -884,8 +901,21 @@ export async function updateConfigPagos(patch: Partial<ConfigPagos>, actualizado
     actualizado_por: actualizadoPor,
     actualizado_en: new Date().toISOString(),
   };
-  if (patch.montoInstructorPrimerAlumno !== undefined) fields.monto_instructor_primer_alumno = patch.montoInstructorPrimerAlumno;
-  if (patch.montoInstructorAlumnoAdicional !== undefined) fields.monto_instructor_alumno_adicional = patch.montoInstructorAlumnoAdicional;
+  if (patch.montosInstructor) {
+    const m = patch.montosInstructor;
+    if (m.Junior) {
+      fields.monto_instructor_primer_alumno_junior = m.Junior.primero;
+      fields.monto_instructor_alumno_adicional_junior = m.Junior.adicional;
+    }
+    if (m.Senior) {
+      fields.monto_instructor_primer_alumno_senior = m.Senior.primero;
+      fields.monto_instructor_alumno_adicional_senior = m.Senior.adicional;
+    }
+    if (m.Master) {
+      fields.monto_instructor_primer_alumno_master = m.Master.primero;
+      fields.monto_instructor_alumno_adicional_master = m.Master.adicional;
+    }
+  }
   if (patch.tarifasInstructor) {
     fields.tarifa_instructor_junior = patch.tarifasInstructor.Junior;
     fields.tarifa_instructor_senior = patch.tarifasInstructor.Senior;
@@ -918,6 +948,9 @@ export async function updatePreciosAlumnos(patch: Partial<PreciosAlumnos>, actua
   if (patch.duracionJuniorClases !== undefined) fields.duracion_junior_clases = patch.duracionJuniorClases;
   if (patch.duracionSeniorClases !== undefined) fields.duracion_senior_clases = patch.duracionSeniorClases;
   if (patch.duracionMasterClases !== undefined) fields.duracion_master_clases = patch.duracionMasterClases;
+  if (patch.inscripcionJunior !== undefined) fields.inscripcion_junior = patch.inscripcionJunior;
+  if (patch.inscripcionSenior !== undefined) fields.inscripcion_senior = patch.inscripcionSenior;
+  if (patch.inscripcionMaster !== undefined) fields.inscripcion_master = patch.inscripcionMaster;
   const { error } = await supabase.from("precios_alumnos").update(fields).eq("id", "default");
   if (error) rethrow("updatePreciosAlumnos", error, "No se pudieron actualizar los precios.");
 }
