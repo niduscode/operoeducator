@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { UserRole, determineRole, usernameToEmail } from "@/lib/database.types";
+import { getStaffRoleByEmail } from "@/lib/queries";
 
 interface UseAuthReturn {
   user: User | null;
@@ -12,6 +13,21 @@ interface UseAuthReturn {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+}
+
+// Resuelve el rol final del usuario:
+//   1. Consulta app_users (fuente de verdad desde migración 0009).
+//   2. Si app_users dice director/admin, ese es el rol.
+//   3. Si no aparece, cae a determineRole(email) — que mira las
+//      constantes hardcoded DIRECTORES/ADMINS (fallback de bootstrap)
+//      o devuelve "instructor" por defecto.
+//
+// Esto permite que un director recién creado desde /admin/usuarios
+// tenga su rol activo en el próximo refresh sin redespliegue.
+async function resolveRole(email: string): Promise<UserRole> {
+  const fromDb = await getStaffRoleByEmail(email);
+  if (fromDb) return fromDb;
+  return determineRole(email);
 }
 
 export function useAuth(): UseAuthReturn {
@@ -26,20 +42,30 @@ export function useAuth(): UseAuthReturn {
     let resolved = false;
     let mounted = true;
 
-    const applySession = (supabaseUser: User | null) => {
+    const applySession = async (supabaseUser: User | null) => {
       if (!mounted) return;
       if (supabaseUser) {
         const email = supabaseUser.email ?? "";
-        // El rol se deriva del username (parte antes de @) contra DIRECTORES/ADMINS.
         setUser(supabaseUser);
         setUserEmail(email);
+        // Optimista: arrancamos con el rol "fallback" (instantáneo) para
+        // no bloquear el render. Luego, en background, consultamos
+        // app_users y ajustamos. En el 99% de los casos el rol final
+        // coincide con el fallback (el bootstrap está sembrado en BD).
         setUserRole(determineRole(email));
+        setIsLoading(false);
+        try {
+          const finalRole = await resolveRole(email);
+          if (mounted) setUserRole(finalRole);
+        } catch (err) {
+          console.warn("useAuth: no se pudo resolver rol desde app_users, manteniendo fallback", err);
+        }
       } else {
         setUser(null);
         setUserEmail("");
         setUserRole(null);
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     // Red de seguridad: si Supabase Auth no resuelve en 5s (red lenta,
@@ -65,21 +91,21 @@ export function useAuth(): UseAuthReturn {
         if (resolved) return;
         resolved = true;
         clearTimeout(timeoutId);
-        applySession(data.session?.user ?? null);
+        void applySession(data.session?.user ?? null);
       })
       .catch((err) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(timeoutId);
         console.warn("useAuth: error obteniendo sesión inicial", err);
-        applySession(null);
+        void applySession(null);
       });
 
     // Suscripción a cambios futuros (login, logout, refresh de token).
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       resolved = true;
       clearTimeout(timeoutId);
-      applySession(session?.user ?? null);
+      void applySession(session?.user ?? null);
     });
 
     return () => {

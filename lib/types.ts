@@ -373,10 +373,40 @@ export const SUCURSALES: Sucursal[] = ['Puerto Montt', 'Osorno', 'Valdivia', 'Te
 // Auth sigue recibiendo un email válido (username + INTERNAL_DOMAIN).
 export const INTERNAL_DOMAIN = "@operoeducator.internal";
 
-// Usernames (sin dominio) que tienen cada rol.
-// El resto de cuentas autenticadas cae en rol "instructor" por defecto.
+// Usernames con rol director/admin — FALLBACK DE BOOTSTRAP únicamente.
+//
+// A partir de la migración 0009, la fuente de verdad de los roles
+// director/admin es la tabla `app_users` en Postgres. La UI de gestión
+// vive en /admin/usuarios. Estas constantes se mantienen para dos
+// casos puntuales:
+//
+//   1. Si por alguna razón la tabla queda vacía o no responde, el
+//      director original puede entrar igual y restaurar el estado.
+//   2. Algunos componentes históricos llamaban a determineRole() de
+//      forma sincrónica (sin esperar a la BD). Esos sitios reciben
+//      como respuesta el rol determinado por estas constantes.
+//      determineRoleFromAppUsers() (que sí consulta la BD) es la API
+//      preferida — ver hooks/useAuth.ts.
+//
+// Si vas a entregar este código a otro equipo: NO agregues nuevos
+// directores/admins acá. Hazlo desde /admin/usuarios.
 export const DIRECTORES: string[] = ["director.christan", "director.maria"];
 export const ADMINS: string[] = ["admin.finanzas"];
+
+// Roles gestionables desde /admin/usuarios. Sólo director y admin se
+// almacenan en app_users; los instructores viven en su propia tabla.
+export type StaffRole = 'director' | 'admin';
+export const STAFF_ROLES: StaffRole[] = ['director', 'admin'];
+
+export interface AppUser {
+  email: string;          // PK, lowercase
+  username: string;
+  role: StaffRole;
+  nombreCompleto: string;
+  creadoPor: string;
+  createdAt: string;       // ISO datetime
+  updatedAt: string;
+}
 
 export function usernameToEmail(username: string): string {
   return username.includes("@") ? username : `${username}${INTERNAL_DOMAIN}`;

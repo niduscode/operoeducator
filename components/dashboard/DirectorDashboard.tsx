@@ -85,6 +85,9 @@ export default function DirectorDashboard() {
           <Link href="/configuracion/pagos">
             <Button variant="outline">Config Pagos</Button>
           </Link>
+          <Link href="/admin/usuarios">
+            <Button variant="outline">Usuarios</Button>
+          </Link>
         </div>
       </div>
 

@@ -197,6 +197,18 @@ export interface PagoRealizadoRow {
   updated_at: string;
 }
 
+// Tabla de roles director/admin gestionable desde la UI (migración 0009).
+// Los instructores NO viven acá — se resuelven contra la tabla `instructores`.
+export interface AppUserRow {
+  email: string;             // PK lowercase
+  username: string;
+  role: 'director' | 'admin';
+  nombre_completo: string;
+  creado_por: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TemarioRow {
   curso: Curso;
   fecha_inicio: string;
@@ -417,10 +429,11 @@ export {
   INTERNAL_DOMAIN,
   DIRECTORES,
   ADMINS,
+  STAFF_ROLES,
   DURACION_DEFAULT_CLASES,
   TIPOS_PAGO_ALUMNO,
   usernameToEmail,
   emailToUsername,
   determineRole,
 } from "./types";
-export type { Turno, UserRole, CursoConfig, SemanaTemario, Profesor, AcademiaData, PagoCalculado } from "./types";
+export type { Turno, UserRole, StaffRole, AppUser, CursoConfig, SemanaTemario, Profesor, AcademiaData, PagoCalculado } from "./types";

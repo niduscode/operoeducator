@@ -30,10 +30,21 @@ const INTERNAL_DOMAIN = "@operoeducator.internal";
 async function requireDirector() {
   const sb = await getSupabaseServerClient();
   const { data: { user } } = await sb.auth.getUser();
-  if (!user) {
+  if (!user || !user.email) {
     return { ok: false as const, status: 401, msg: "No autenticado." };
   }
-  const role = determineRole(user.email ?? "");
+  const email = user.email.toLowerCase();
+
+  // app_users (migración 0009) es la fuente de verdad. Fallback a las
+  // constantes hardcoded sólo si la fila no existe (bootstrap).
+  const admin = getSupabaseServiceClient();
+  const { data: row } = await admin
+    .from("app_users")
+    .select("role")
+    .eq("email", email)
+    .maybeSingle();
+  const role = row?.role ?? determineRole(email);
+
   if (role !== "director") {
     return { ok: false as const, status: 403, msg: "Solo el director puede gestionar instructores." };
   }

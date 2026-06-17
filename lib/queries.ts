@@ -13,6 +13,8 @@ import { supabase } from "./supabase";
 import type {
   Alumno,
   AlumnoRow,
+  AppUser,
+  AppUserRow,
   AsistenciaAlumno,
   AsistenciaAlumnoRow,
   AsistenciaProfeGuia,
@@ -35,6 +37,7 @@ import type {
   ProfeGuia,
   ProfeGuiaRow,
   SemanaTemarioRow,
+  StaffRole,
   Sucursal,
   TarifasPorCurso,
   TemaSemana,
@@ -1135,4 +1138,52 @@ export async function deleteSemanaTemario(curso: Curso, semanaNumero: number): P
     .eq("curso", curso)
     .eq("semana_numero", semanaNumero);
   if (error) rethrow("deleteSemanaTemario", error, "No se pudo eliminar la semana.");
+}
+
+// =====================================================================
+// app_users — gestión de roles director/admin (migración 0009).
+//
+// Las MUTACIONES (create/delete/changeRole) van por la API route
+// /api/admin/users porque requieren service_role para tocar auth.users.
+// Acá sólo exponemos lectura + helpers para resolver el rol de un email.
+// =====================================================================
+
+function toAppUser(r: AppUserRow): AppUser {
+  return {
+    email: r.email,
+    username: r.username,
+    role: r.role,
+    nombreCompleto: r.nombre_completo,
+    creadoPor: r.creado_por,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export async function getAppUsers(): Promise<AppUser[]> {
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("*")
+    .order("role", { ascending: true })
+    .order("username", { ascending: true });
+  if (error) rethrow("getAppUsers", error, "No se pudo cargar la lista de usuarios.");
+  return ((data ?? []) as AppUserRow[]).map(toAppUser);
+}
+
+// Resuelve el rol de un email contra app_users. Devuelve null si no es
+// staff (en cuyo caso el caller decide si tratar como instructor o
+// negar acceso). Usado por useAuth para derivar el rol desde la BD en
+// vez de hardcoded constants.
+export async function getStaffRoleByEmail(email: string): Promise<StaffRole | null> {
+  const normalized = email.toLowerCase();
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("role")
+    .eq("email", normalized)
+    .maybeSingle();
+  if (error) {
+    console.warn("[supabase] getStaffRoleByEmail:", error);
+    return null;
+  }
+  return (data?.role as StaffRole | undefined) ?? null;
 }
