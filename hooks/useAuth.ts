@@ -15,19 +15,56 @@ interface UseAuthReturn {
   logout: () => Promise<void>;
 }
 
-// Resuelve el rol final del usuario:
-//   1. Consulta app_users (fuente de verdad desde migración 0009).
-//   2. Si app_users dice director/admin, ese es el rol.
-//   3. Si no aparece, cae a determineRole(email) — que mira las
-//      constantes hardcoded DIRECTORES/ADMINS (fallback de bootstrap)
-//      o devuelve "instructor" por defecto.
+// Cache del rol resuelto en sessionStorage para que navegar entre páginas no
+// re-resuelva contra la BD (cada página re-monta useAuth). Si no cacheamos,
+// hay una ventana de ~100-500ms donde el rol queda en el fallback hardcoded
+// ("instructor" para usuarios nuevos no listados en DIRECTORES/ADMINS) y los
+// guards `if (userRole !== "director") router.replace("/dashboard")` rebotan
+// al usuario antes de que la query a la BD termine.
 //
-// Esto permite que un director recién creado desde /admin/usuarios
-// tenga su rol activo en el próximo refresh sin redespliegue.
-async function resolveRole(email: string): Promise<UserRole> {
-  const fromDb = await getStaffRoleByEmail(email);
-  if (fromDb) return fromDb;
-  return determineRole(email);
+// TTL corto (5 min) para que cambios de rol desde /admin/usuarios se reflejen
+// pronto. Más allá de eso, basta con que el usuario refresque para limpiar.
+const ROLE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function roleCacheKey(email: string): string {
+  return `opero_role_${email.toLowerCase()}`;
+}
+
+function getCachedRole(email: string): UserRole | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(roleCacheKey(email));
+    if (!raw) return null;
+    const { role, exp } = JSON.parse(raw) as { role: UserRole; exp: number };
+    if (Date.now() > exp) {
+      sessionStorage.removeItem(roleCacheKey(email));
+      return null;
+    }
+    return role;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedRole(email: string, role: UserRole): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      roleCacheKey(email),
+      JSON.stringify({ role, exp: Date.now() + ROLE_CACHE_TTL_MS })
+    );
+  } catch {
+    // sessionStorage lleno o no disponible; ignorar.
+  }
+}
+
+function clearCachedRole(email: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(roleCacheKey(email));
+  } catch {
+    // ignorar.
+  }
 }
 
 export function useAuth(): UseAuthReturn {
@@ -36,41 +73,63 @@ export function useAuth(): UseAuthReturn {
   const [userEmail, setUserEmail] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Suscripción al estado de autenticación de Supabase.
-  // Se ejecuta una sola vez y se limpia al desmontar.
   useEffect(() => {
     let resolved = false;
     let mounted = true;
 
     const applySession = async (supabaseUser: User | null) => {
       if (!mounted) return;
-      if (supabaseUser) {
-        const email = supabaseUser.email ?? "";
-        setUser(supabaseUser);
-        setUserEmail(email);
-        // Optimista: arrancamos con el rol "fallback" (instantáneo) para
-        // no bloquear el render. Luego, en background, consultamos
-        // app_users y ajustamos. En el 99% de los casos el rol final
-        // coincide con el fallback (el bootstrap está sembrado en BD).
-        setUserRole(determineRole(email));
-        setIsLoading(false);
-        try {
-          const finalRole = await resolveRole(email);
-          if (mounted) setUserRole(finalRole);
-        } catch (err) {
-          console.warn("useAuth: no se pudo resolver rol desde app_users, manteniendo fallback", err);
-        }
-      } else {
+      if (!supabaseUser) {
         setUser(null);
         setUserEmail("");
         setUserRole(null);
         setIsLoading(false);
+        return;
+      }
+
+      const email = supabaseUser.email ?? "";
+      setUser(supabaseUser);
+      setUserEmail(email);
+
+      // 1) Si hay rol cacheado, úsalo de inmediato. Esto evita el flash de
+      //    "instructor" cuando un director/admin nuevo navega entre páginas.
+      const cached = getCachedRole(email);
+      if (cached) {
+        setUserRole(cached);
+        setIsLoading(false);
+        // Re-validamos en background con bajo costo para mantener fresco el cache.
+        try {
+          const fresh = await getStaffRoleByEmail(email);
+          const finalRole: UserRole = fresh ?? determineRole(email);
+          if (mounted && finalRole !== cached) {
+            setUserRole(finalRole);
+          }
+          setCachedRole(email, finalRole);
+        } catch {
+          // Mantenemos el cached si la red falla.
+        }
+        return;
+      }
+
+      // 2) Sin cache: bloqueamos isLoading hasta tener el rol real. Es la
+      //    primera carga de la sesión (login fresco o refresh), ahí sí
+      //    podemos pagar los ~150ms de la query.
+      try {
+        const fresh = await getStaffRoleByEmail(email);
+        if (!mounted) return;
+        const finalRole: UserRole = fresh ?? determineRole(email);
+        setUserRole(finalRole);
+        setCachedRole(email, finalRole);
+      } catch (err) {
+        console.warn("useAuth: fallback a rol hardcoded", err);
+        if (mounted) setUserRole(determineRole(email));
+      } finally {
+        if (mounted) setIsLoading(false);
       }
     };
 
-    // Red de seguridad: si Supabase Auth no resuelve en 5s (red lenta,
-    // storage colgado, túnel HTTPS con problemas), tratamos al usuario
-    // como no autenticado en vez de quedarnos en loading infinito.
+    // Red de seguridad: si Supabase Auth no resuelve en 5s, tratamos al
+    // usuario como no autenticado en vez de quedarnos en loading infinito.
     const timeoutId = setTimeout(() => {
       if (resolved) return;
       resolved = true;
@@ -82,9 +141,6 @@ export function useAuth(): UseAuthReturn {
       setIsLoading(false);
     }, 5000);
 
-    // Hidratamos el estado con la sesión actual (si existe) antes de
-    // engancharnos a los cambios. getSession() lee de storage local y es
-    // sincrónico-rápido cuando ya hay sesión persistida.
     supabase.auth
       .getSession()
       .then(({ data }) => {
@@ -101,7 +157,6 @@ export function useAuth(): UseAuthReturn {
         void applySession(null);
       });
 
-    // Suscripción a cambios futuros (login, logout, refresh de token).
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       resolved = true;
       clearTimeout(timeoutId);
@@ -116,17 +171,18 @@ export function useAuth(): UseAuthReturn {
   }, []);
 
   const login = useCallback(async (username: string, password: string) => {
-    // El usuario escribe solo su username (ej. "director.christan");
-    // usernameToEmail le agrega el dominio interno para Supabase Auth.
     const email = usernameToEmail(username.trim());
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
   }, []);
 
   const logout = useCallback(async () => {
+    // Limpiamos el cache del rol al cerrar sesión para evitar leak si
+    // otra persona usa el mismo navegador después.
+    if (userEmail) clearCachedRole(userEmail);
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-  }, []);
+  }, [userEmail]);
 
   return {
     user,
