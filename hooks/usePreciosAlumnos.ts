@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   getPreciosAlumnos,
@@ -28,6 +28,9 @@ export function usePreciosAlumnos(): UsePreciosAlumnosReturn {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState<number>(0);
+  // ID único por instancia para evitar colisión de canal Realtime si el
+  // hook se monta múltiples veces en la misma página.
+  const instanceId = useId();
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +60,7 @@ export function usePreciosAlumnos(): UsePreciosAlumnosReturn {
 
   useEffect(() => {
     const channel = supabase
-      .channel("precios-alumnos-default")
+      .channel(`precios-alumnos-default-${instanceId}`)
       .on(
         "postgres_changes",
         {
@@ -74,7 +77,7 @@ export function usePreciosAlumnos(): UsePreciosAlumnosReturn {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [instanceId]);
 
   const updatePrecios = useCallback(
     async (patch: Partial<PreciosAlumnos>, actualizadoPor: string) => {

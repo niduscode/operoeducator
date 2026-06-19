@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   getAlumnos,
@@ -31,6 +31,10 @@ export function useEstadoMorosidad(
   const [loadingPagos, setLoadingPagos] = useState(true);
   const [loadingPrecios, setLoadingPrecios] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // ID único por instancia para que los canales Realtime no choquen si el
+  // hook se monta múltiples veces en la misma página (Supabase reutiliza
+  // canales por nombre y rechaza .on() después de .subscribe()).
+  const instanceId = useId();
 
   const fetchAlumnos = useCallback(async () => {
     try {
@@ -73,7 +77,7 @@ export function useEstadoMorosidad(
     setLoadingAlumnos(true);
     fetchAlumnos();
     const channel = supabase
-      .channel("estado-morosidad-alumnos")
+      .channel(`estado-morosidad-alumnos-${instanceId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "alumnos" },
@@ -85,13 +89,13 @@ export function useEstadoMorosidad(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchAlumnos]);
+  }, [fetchAlumnos, instanceId]);
 
   useEffect(() => {
     setLoadingPagos(true);
     fetchPagos();
     const channel = supabase
-      .channel(`estado-morosidad-pagos-${año}-${mes}`)
+      .channel(`estado-morosidad-pagos-${año}-${mes}-${instanceId}`)
       .on(
         "postgres_changes",
         {
@@ -108,13 +112,13 @@ export function useEstadoMorosidad(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchPagos, mes, año]);
+  }, [fetchPagos, mes, año, instanceId]);
 
   useEffect(() => {
     setLoadingPrecios(true);
     fetchPrecios();
     const channel = supabase
-      .channel("estado-morosidad-precios")
+      .channel(`estado-morosidad-precios-${instanceId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "precios_alumnos" },
@@ -126,7 +130,7 @@ export function useEstadoMorosidad(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchPrecios]);
+  }, [fetchPrecios, instanceId]);
 
   return useMemo<UseEstadoMorosidadReturn>(() => {
     const totalRecaudado = pagos.reduce((acc, p) => acc + (p.monto || 0), 0);

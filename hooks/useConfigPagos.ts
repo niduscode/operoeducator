@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getConfigPagos, updateConfigPagos } from "@/lib/queries";
 import type { ConfigPagos } from "@/lib/database.types";
@@ -20,6 +20,12 @@ export function useConfigPagos(): UseConfigPagosReturn {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState<number>(0);
+  // ID único por instancia del hook para evitar colisión de nombre cuando
+  // el hook se monta múltiples veces en la misma página (por ej. /pagos
+  // lo llama desde usePagosInstructores Y usePagosProfesGuias). El cliente
+  // Supabase reutiliza canales por nombre y rechaza .on() después de
+  // .subscribe(), que es lo que crasheaba /pagos.
+  const instanceId = useId();
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +49,7 @@ export function useConfigPagos(): UseConfigPagosReturn {
     fetchConfig();
 
     const channel = supabase
-      .channel("config-pagos-default")
+      .channel(`config-pagos-default-${instanceId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "config_pagos", filter: "id=eq.default" },
@@ -57,7 +63,7 @@ export function useConfigPagos(): UseConfigPagosReturn {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [nonce]);
+  }, [nonce, instanceId]);
 
   const updateConfig = useCallback(
     async (patch: Partial<ConfigPagos>, actualizadoPor: string): Promise<void> => {
