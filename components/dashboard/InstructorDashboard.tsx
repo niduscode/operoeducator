@@ -88,10 +88,30 @@ export default function InstructorDashboard() {
     );
   }
 
+  // Inicial del nombre para el avatar (estilo app de barberos).
+  const inicial = (perfil.nombreCompleto || "?").trim().charAt(0).toUpperCase();
+
   return (
-    <div className="space-y-6 md:space-y-8 animate-[fadeIn_0.3s_ease]">
-      <div className="header-top flex justify-between items-center flex-wrap gap-4">
-        <div className="w-full">
+    <div className="space-y-4 md:space-y-8 animate-[fadeIn_0.3s_ease]">
+      {/* Header — compacto en mobile (avatar + nombre + sucursal en una fila);
+          desktop mantiene el saludo grande tradicional. */}
+      <div className="header-top flex justify-between items-center gap-3">
+        {/* Mobile: avatar circular + nombre/sucursal en una línea. */}
+        <div className="flex items-center gap-3 md:hidden min-w-0 flex-1">
+          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-brand-500 to-accent-400 text-white flex items-center justify-center font-semibold text-lg shadow-md shadow-brand-500/20 flex-shrink-0">
+            {inicial}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-slate-900 truncate leading-tight">
+              {perfil.nombreCompleto}
+            </p>
+            <p className="text-[11px] text-slate-500 truncate">
+              {perfil.sucursalActual} · {fechaHoy.split(",")[0]}
+            </p>
+          </div>
+        </div>
+        {/* Desktop: saludo grande original. */}
+        <div className="hidden md:block w-full">
           <h1 className="text-2xl md:text-3xl font-light tracking-tight text-slate-900">
             Hola, {perfil.nombreCompleto} 👋
           </h1>
@@ -106,9 +126,27 @@ export default function InstructorDashboard() {
         mostrarBotonPagos={false}
       />
 
-      <Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-900/20">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div>
+      {/* Card de operación: sucursal + alumnos + profes guías.
+          Mobile: grid 2 cols compacto. Desktop: layout original 3 cols.
+          Los CTAs grandes (Ir al Aula / Mi Pago) viven en el bottom nav en
+          mobile, y aquí solo se muestran en desktop. */}
+      <Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-900/20 !p-4 md:!p-6">
+        {/* Sucursal asignada — full width arriba en mobile, columna en desktop. */}
+        <div className="md:hidden mb-3">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+            Sucursal asignada
+          </label>
+          <div className="w-full bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 text-white text-sm font-semibold flex items-center justify-between">
+            <span>{perfil.sucursalActual}</span>
+            <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
+              Fija
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-4 md:mb-4">
+          {/* Sucursal — solo desktop (en mobile va arriba full width). */}
+          <div className="hidden md:block">
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
               Sucursal asignada
             </label>
@@ -122,32 +160,33 @@ export default function InstructorDashboard() {
           <button
             type="button"
             onClick={() => setModal("alumnos")}
-            className="text-left bg-slate-800 hover:bg-slate-700 active:scale-[0.98] transition-all p-3 rounded-2xl border border-slate-700"
+            className="text-left bg-slate-800 hover:bg-slate-700 active:scale-[0.98] transition-all p-3 rounded-xl md:rounded-2xl border border-slate-700"
           >
-            <p className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+            <p className="block text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 md:mb-2 leading-tight">
               Alumnos en {perfil.sucursalActual}
             </p>
-            <p className="text-3xl font-light">{alumnos.length}</p>
+            <p className="text-2xl md:text-3xl font-light">{alumnos.length}</p>
             <p className="text-[10px] text-slate-400 mt-1 underline">
-              Ver y asignarme alumnos
+              Ver y asignarme
             </p>
           </button>
           <button
             type="button"
             onClick={() => setModal("profes")}
-            className="text-left bg-slate-800 hover:bg-slate-700 active:scale-[0.98] transition-all p-3 rounded-2xl border border-slate-700"
+            className="text-left bg-slate-800 hover:bg-slate-700 active:scale-[0.98] transition-all p-3 rounded-xl md:rounded-2xl border border-slate-700"
           >
-            <p className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+            <p className="block text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 md:mb-2 leading-tight">
               Profes guías activos
             </p>
-            <p className="text-3xl font-light">{profesActivos.length}</p>
+            <p className="text-2xl md:text-3xl font-light">{profesActivos.length}</p>
             <p className="text-[10px] text-slate-400 mt-1 underline">
-              Asignar alumnos a profes
+              Asignar a profes
             </p>
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+        {/* CTAs grandes — solo desktop. En mobile el bottom nav cumple la función. */}
+        <div className="hidden md:grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
           <Link href="/aulas" className="w-full">
             <Button variant="primary" className="w-full">
               Ir al Aula Virtual

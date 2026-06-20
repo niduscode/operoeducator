@@ -6,6 +6,7 @@ import Button from "@/components/ui/Button";
 import DirectorDashboard from "@/components/dashboard/DirectorDashboard";
 import AdminDashboard from "@/components/dashboard/AdminDashboard";
 import InstructorDashboard from "@/components/dashboard/InstructorDashboard";
+import InstructorBottomNav from "@/components/dashboard/InstructorBottomNav";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function DashboardPage() {
@@ -43,10 +44,22 @@ export default function DashboardPage() {
     }
   };
 
+  const isInstructor = userRole === "instructor";
+
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+    <div
+      className={`min-h-screen bg-slate-50 p-4 md:p-8 ${
+        isInstructor ? "pb-24 md:pb-8" : ""
+      }`}
+    >
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-end mb-4">
+        {/* "Cerrar sesión" arriba: para instructor solo en desktop (en mobile
+            vive en el bottom nav). Para director/admin siempre arriba. */}
+        <div
+          className={`flex justify-end mb-4 ${
+            isInstructor ? "hidden md:flex" : ""
+          }`}
+        >
           <Button variant="outline" onClick={handleLogout}>
             Cerrar sesión
           </Button>
@@ -54,6 +67,8 @@ export default function DashboardPage() {
 
         {renderDashboard()}
       </div>
+
+      {isInstructor && <InstructorBottomNav />}
     </div>
   );
 }

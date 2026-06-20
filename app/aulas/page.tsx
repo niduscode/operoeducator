@@ -10,6 +10,7 @@ import Modal from "@/components/ui/Modal";
 import Input from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
 import CertificacionesBanner from "@/components/dashboard/CertificacionesBanner";
+import InstructorBottomNav from "@/components/dashboard/InstructorBottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { useMiPerfil } from "@/hooks/useMiPerfil";
 import { useAlumnos } from "@/hooks/useAlumnos";
@@ -273,7 +274,7 @@ export default function AulaVirtualPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 pb-24 md:pb-8">
       <div className="max-w-7xl mx-auto space-y-6 animate-[fadeIn_0.3s_ease]">
         <BackButton />
 
@@ -508,6 +509,7 @@ export default function AulaVirtualPage() {
           />
         )}
       </div>
+      <InstructorBottomNav />
     </div>
   );
 }

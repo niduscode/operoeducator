@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import BackButton from "@/components/ui/BackButton";
 import Card from "@/components/ui/Card";
 import Select from "@/components/ui/Select";
+import InstructorBottomNav from "@/components/dashboard/InstructorBottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { useMiPago } from "@/hooks/useMiPago";
 import { useMiPerfil } from "@/hooks/useMiPerfil";
@@ -56,7 +57,7 @@ export default function MiPagoPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 pb-24 md:pb-8">
       <div className="max-w-4xl mx-auto space-y-6 animate-[fadeIn_0.3s_ease]">
         <BackButton />
 
@@ -192,6 +193,7 @@ export default function MiPagoPage() {
           </Card>
         )}
       </div>
+      <InstructorBottomNav />
     </div>
   );
 }
