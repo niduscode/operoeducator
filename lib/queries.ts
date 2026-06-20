@@ -86,8 +86,11 @@ function fromAlumnoInput(a: Omit<Alumno, "id">): Omit<AlumnoRow, "id" | "created
     curso: a.curso,
     horario: a.horario,
     fecha: a.fecha,
-    profe_guia_id: a.profeGuiaId ?? null,
-    instructor_id: a.instructorId ?? null,
+    // profe_guia_id e instructor_id son UUID con FK. Un string vacío "" no es
+    // UUID válido y la BD rechaza el insert. Los formularios y el BulkImport
+    // a veces mandan "" cuando no hay asignación — lo normalizamos a null.
+    profe_guia_id: a.profeGuiaId && a.profeGuiaId.length > 0 ? a.profeGuiaId : null,
+    instructor_id: a.instructorId && a.instructorId.length > 0 ? a.instructorId : null,
     activo: a.activo,
   };
 }
@@ -134,7 +137,8 @@ function fromInstructorInput(
   i: Omit<Instructor, "id" | "fechaCreacion">
 ): Omit<InstructorRow, "id" | "created_at" | "updated_at"> {
   return {
-    user_id: i.userId ?? null,
+    // user_id es UUID con FK a auth.users — "" no es UUID válido.
+    user_id: i.userId && i.userId.length > 0 ? i.userId : null,
     username: i.username,
     email: i.email,
     nombre_completo: i.nombreCompleto,
@@ -191,8 +195,12 @@ function fromAsistenciaInput(
     turno: a.turno,
     tarifa_instructor_aplicada: a.tarifaInstructorAplicada ?? null,
     tarifa_profe_guia_aplicada: a.tarifaProfeGuiaAplicada ?? null,
-    profe_guia_id_snapshot: a.profeGuiaIdSnapshot ?? null,
-    instructor_id_snapshot: a.instructorIdSnapshot ?? null,
+    // Snapshots son UUID nullable en BD — "" no es UUID válido. resolverSnapshots
+    // pone "" como default cuando el alumno no tiene asignación; lo normalizamos a null.
+    profe_guia_id_snapshot:
+      a.profeGuiaIdSnapshot && a.profeGuiaIdSnapshot.length > 0 ? a.profeGuiaIdSnapshot : null,
+    instructor_id_snapshot:
+      a.instructorIdSnapshot && a.instructorIdSnapshot.length > 0 ? a.instructorIdSnapshot : null,
   };
 }
 
@@ -408,8 +416,12 @@ export async function updateAlumno(id: string, patch: Partial<Omit<Alumno, "id">
   if (patch.curso !== undefined) fields.curso = patch.curso;
   if (patch.horario !== undefined) fields.horario = patch.horario;
   if (patch.fecha !== undefined) fields.fecha = patch.fecha;
-  if (patch.profeGuiaId !== undefined) fields.profe_guia_id = patch.profeGuiaId ?? null;
-  if (patch.instructorId !== undefined) fields.instructor_id = patch.instructorId ?? null;
+  if (patch.profeGuiaId !== undefined) {
+    fields.profe_guia_id = patch.profeGuiaId && patch.profeGuiaId.length > 0 ? patch.profeGuiaId : null;
+  }
+  if (patch.instructorId !== undefined) {
+    fields.instructor_id = patch.instructorId && patch.instructorId.length > 0 ? patch.instructorId : null;
+  }
   if (patch.activo !== undefined) fields.activo = patch.activo;
   const { error } = await supabase.from("alumnos").update(fields).eq("id", id);
   if (error) rethrow("updateAlumno", error, "No se pudo actualizar el alumno.");
@@ -565,7 +577,9 @@ export async function updateInstructor(
   patch: Partial<Omit<Instructor, "id">>
 ): Promise<void> {
   const fields: Partial<InstructorRow> = {};
-  if (patch.userId !== undefined) fields.user_id = patch.userId ?? null;
+  if (patch.userId !== undefined) {
+    fields.user_id = patch.userId && patch.userId.length > 0 ? patch.userId : null;
+  }
   if (patch.username !== undefined) fields.username = patch.username;
   if (patch.email !== undefined) fields.email = patch.email;
   if (patch.nombreCompleto !== undefined) fields.nombre_completo = patch.nombreCompleto;
