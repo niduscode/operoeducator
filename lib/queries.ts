@@ -91,7 +91,10 @@ function fromAlumnoInput(a: Omit<Alumno, "id">): Omit<AlumnoRow, "id" | "created
     // a veces mandan "" cuando no hay asignación — lo normalizamos a null.
     profe_guia_id: a.profeGuiaId && a.profeGuiaId.length > 0 ? a.profeGuiaId : null,
     instructor_id: a.instructorId && a.instructorId.length > 0 ? a.instructorId : null,
-    activo: a.activo,
+    // activo es NOT NULL en la BD; el BulkImport y algunos forms no lo envían.
+    // Default true cuando no viene definido — coherente con el resto de la app
+    // que trata "sin campo activo" como activo.
+    activo: a.activo ?? true,
   };
 }
 
